@@ -99,9 +99,10 @@ model PaymentMandate {
   id              String   @id @default(cuid())
   agentId         String   @unique
   customerEmail   String   @default("user@spendboundary.ai")
+  customerId      String?  // Razorpay "cust_..." customer bound to this mandate (required for silent recurring charges)
   status          String   @default("ACTIVE") // ACTIVE, PENDING_AUTHORIZATION, REVOKED
   maxDebitPaise   Int      @default(100000) // ₹1,000 max single debit without human OTP
-  tokenId         String   @default("token_rzp_preauth_card")
+  tokenId         String   @default("token_rzp_preauth_card") // Must be a genuine Razorpay "token_..." id to support silent auto-debit
   cardLast4       String   @default("4242")
   cardNetwork     String   @default("Visa")
   paymentLinkId   String?

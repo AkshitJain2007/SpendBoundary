@@ -7,6 +7,21 @@ export type PaymentAttemptStatus =
   | "FAILED"
   | "TIMEOUT";
 
+/**
+ * Saved-card mandate context for an auto-debit attempt.
+ * `customerId` + `tokenId` must be genuine Razorpay entities
+ * (`cust_...` + `token_...`) for a silent recurring charge to be possible.
+ */
+export interface MandateChargeContext {
+  agentId?: string;
+  customerId?: string | null;
+  tokenId?: string | null;
+  cardLast4?: string | null;
+  cardNetwork?: string | null;
+  email?: string | null;
+  contact?: string | null;
+}
+
 export interface CreateOrderInput {
   requestId: string;
   amountPaise: number;
@@ -14,6 +29,7 @@ export interface CreateOrderInput {
   idempotencyKey: string;
   description: string;
   simulateTimeout?: boolean;
+  mandate?: MandateChargeContext;
 }
 
 export interface CreateOrderResult {

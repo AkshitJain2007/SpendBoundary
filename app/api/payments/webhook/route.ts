@@ -87,6 +87,7 @@ export async function POST(request: Request) {
             cardLast4: cardInfo?.last4 || "4242",
             cardNetwork: cardInfo?.network || "Visa",
             tokenId: tokenId || `token_rzp_${cardInfo?.last4 || "saved"}`,
+            customerId: paymentEntity.customer_id || undefined,
           },
           create: {
             agentId: agentReq.agentId,
@@ -94,6 +95,7 @@ export async function POST(request: Request) {
             cardLast4: cardInfo?.last4 || "4242",
             cardNetwork: cardInfo?.network || "Visa",
             tokenId: tokenId || `token_rzp_${cardInfo?.last4 || "saved"}`,
+            customerId: paymentEntity.customer_id || null,
             maxDebitPaise: 100000,
           },
         });

@@ -58,9 +58,11 @@ When an agent requests a purchase, the policy engine recalculates prices from th
 
 | Status | Condition | Action |
 | :---: | :--- | :--- |
-| ✅ **ALLOW** | The order satisfies all limits. | The system completes the order using the agent's pre-authorized card mandate token and logs the transaction. |
+| ✅ **ALLOW** | The order satisfies all limits. | The system executes the payment at Razorpay (tokenized auto-debit against the saved `token_...` card token via `/v1/payments/create/recurring`) and marks the request `PAID` **only after a real captured payment exists**. |
 | ⚠️ **REVIEW** | The order exceeds the auto-approval threshold or cumulative daily limit. | The system creates an approval record and generates a hosted Razorpay payment link for manual authorization. |
 | 🚫 **DENY** | The order violates category restrictions, single-order caps, or velocity limits. | The system halts the checkout and records the violation in the audit trail. |
+
+> **🔒 Honest payment semantics (no phantom success):** When live Razorpay keys are configured, SpendBoundary *never* fabricates a successful payment. If the auto-debit cannot be executed — e.g. the mandate only references the ₹1 verification payment (`pay_...`, which is not a re-chargeable token) or the Razorpay API errors — the attempt is recorded as `FAILED` in the ledger, the agent receives an `AUTO_DEBIT_FAILED` result explicitly stating **no money was charged**, and a real hosted Razorpay payment link is issued for the user to complete the checkout manually. Simulated captures happen only when no Razorpay keys are configured at all (pure offline demo mode).
 
 ---
 

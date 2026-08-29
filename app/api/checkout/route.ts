@@ -175,33 +175,115 @@ export async function POST(request: Request) {
 
     // 9. Branch on Decision
     if (policyResult.decision === "ALLOW") {
-      // Execute payment via Razorpay / Gateway
-      const paymentResult = await razorpayGateway.createOrder({
-        requestId,
-        amountPaise: recalculated.totalPaise,
-        currency: "INR",
-        idempotencyKey,
-        description: reason,
-        simulateTimeout,
-      });
+      try {
+        // Load the agent's stored card mandate (if any) so the gateway can
+        // charge a genuine reusable token.
+        const mandate = await prisma.paymentMandate.findUnique({
+          where: { agentId },
+        });
 
-      await appendAuditEvent("PAYMENT_ATTEMPT_RECORDED", requestId, {
-        provider: paymentResult.provider,
-        providerOrderId: paymentResult.providerOrderId,
-        status: paymentResult.status,
-        idempotencyKey,
-        amountPaise: paymentResult.amountPaise,
-      });
+        // Execute payment via Razorpay / Gateway
+        const paymentResult = await razorpayGateway.createOrder({
+          requestId,
+          amountPaise: recalculated.totalPaise,
+          currency: "INR",
+          idempotencyKey,
+          description: reason,
+          simulateTimeout,
+          mandate: mandate
+            ? {
+                agentId,
+                customerId: mandate.customerId,
+                tokenId: mandate.tokenId,
+                cardLast4: mandate.cardLast4,
+                cardNetwork: mandate.cardNetwork,
+                email: mandate.customerEmail,
+              }
+            : undefined,
+        });
 
-      return NextResponse.json({
-        success: true,
-        decision: "ALLOW",
-        requestId,
-        calculatedTotalPaise: recalculated.totalPaise,
-        reasons: policyResult.reasons,
-        policyVersion: policyResult.policyVersion,
-        payment: paymentResult,
-      });
+        await appendAuditEvent("PAYMENT_ATTEMPT_RECORDED", requestId, {
+          provider: paymentResult.provider,
+          providerOrderId: paymentResult.providerOrderId,
+          status: paymentResult.status,
+          idempotencyKey,
+          amountPaise: paymentResult.amountPaise,
+        });
+
+        return NextResponse.json({
+          success: true,
+          decision: "ALLOW",
+          requestId,
+          calculatedTotalPaise: recalculated.totalPaise,
+          reasons: policyResult.reasons,
+          policyVersion: policyResult.policyVersion,
+          payment: paymentResult,
+        });
+      } catch (debitErr: any) {
+        // HONEST FAILURE PATH - no money moved. Record the failure and hand
+        // the user a real hosted payment link instead of faking success.
+        const errorCode = debitErr?.code || "PAYMENT_EXECUTION_FAILED";
+        const errorMessage = debitErr?.message || "Payment execution failed";
+        console.error(`[Checkout Auto-Debit Failed for ${requestId}] (${errorCode}):`, errorMessage);
+
+        await appendAuditEvent("PAYMENT_AUTO_DEBIT_FAILED", requestId, {
+          agentId,
+          amountPaise: recalculated.totalPaise,
+          errorCode,
+          errorMessage,
+        });
+
+        let paymentLink: any = null;
+        try {
+          paymentLink = await razorpayGateway.createPaymentLink({
+            requestId,
+            amountPaise: recalculated.totalPaise,
+            currency: "INR",
+            description: reason,
+          });
+
+          const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+          await prisma.approval.upsert({
+            where: { requestId },
+            update: { decision: "PENDING", expiresAt },
+            create: { requestId, decision: "PENDING", expiresAt },
+          });
+
+          await prisma.agentRequest.update({
+            where: { id: requestId },
+            data: { status: "AWAITING_PAYMENT" },
+          });
+
+          await appendAuditEvent("MANUAL_PAYMENT_LINK_ISSUED", requestId, {
+            paymentLinkId: paymentLink.id,
+            paymentLinkUrl: paymentLink.shortUrl,
+            amountPaise: recalculated.totalPaise,
+            reasonForFallback: errorCode,
+          });
+        } catch (linkErr: any) {
+          console.error(`[Checkout fallback payment link failed for ${requestId}]:`, linkErr?.message);
+        }
+
+        return NextResponse.json({
+          success: false,
+          decision: "ALLOW",
+          requestId,
+          calculatedTotalPaise: recalculated.totalPaise,
+          reasons: policyResult.reasons,
+          policyVersion: policyResult.policyVersion,
+          paymentCreated: false,
+          cardCharged: false,
+          error: {
+            code: errorCode,
+            message: errorMessage,
+            retryable: true,
+          },
+          paymentLinkUrl: paymentLink?.shortUrl || null,
+          message: paymentLink
+            ? `Policy ALLOWED the order but the automatic card charge failed (${errorMessage}). No money was debited. The user can complete the payment manually at: ${paymentLink.shortUrl}`
+            : `Policy ALLOWED the order but the automatic card charge failed (${errorMessage}). No money was debited.`,
+        });
+      }
     }
 
     if (policyResult.decision === "REVIEW") {

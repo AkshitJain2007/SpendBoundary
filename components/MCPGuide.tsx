@@ -13,7 +13,7 @@ export function MCPGuide() {
       mcpServers: {
         spendboundary: {
           command: "npx",
-          args: ["-y", "tsx", "c:/Users/Akshit Jain/Downloads/DEVJAMS NEW/scripts/mcp-server.ts"],
+          args: ["-y", "tsx", "../scripts/mcp-server.ts"],
         },
       },
     },

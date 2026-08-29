@@ -323,7 +323,7 @@ export default function HomePage() {
         body: JSON.stringify({
           requestId,
           decision,
-          reviewerId: "human_admin_akshit",
+          reviewerId: "human_admin",
           comment: comment || (decision === "APPROVED" ? "Approved by reviewer." : "Rejected."),
         }),
       });
