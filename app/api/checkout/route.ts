@@ -175,8 +175,8 @@ export async function POST(request: Request) {
 
     // 9. Branch on Decision
     if (policyResult.decision === "ALLOW") {
-      // Execute payment via gateway
-      const paymentResult = await mockGateway.createOrder({
+      // Execute payment via Razorpay / Gateway
+      const paymentResult = await razorpayGateway.createOrder({
         requestId,
         amountPaise: recalculated.totalPaise,
         currency: "INR",

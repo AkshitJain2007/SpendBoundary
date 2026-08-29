@@ -125,6 +125,27 @@ export default function HomePage() {
     }
   };
 
+  // Reset Daily Spend Limits & Test Transactions to ₹0
+  const handleResetDailySpend = async () => {
+    setLoading(true);
+    try {
+      const res = await safeFetchJson("/api/demo/reset-spend", { method: "POST" });
+      if (res.ok) {
+        setActiveDecision(null);
+        setAgentExecution(null);
+        await fetchInitialData();
+        setStatusMessage("Daily spend reset to ₹0.00. Ready for new purchases.");
+        setTimeout(() => setStatusMessage(null), 3000);
+      } else {
+        setStatusMessage(res.error || "Failed to reset daily spend");
+      }
+    } catch (err) {
+      console.error("Reset spend error:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // 1-Click Scenario Runner
   const handleRunScenario = async (scenarioKey: string) => {
     setLoading(true);
@@ -404,6 +425,16 @@ export default function HomePage() {
               {auditVerification && !auditVerification.valid ? "Tamper Detected!" : "Hash Chain: Active"}
             </span>
           </div>
+
+          <button
+            onClick={handleResetDailySpend}
+            disabled={loading}
+            title="Reset daily spending total to ₹0.00"
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-700/50 transition font-semibold"
+          >
+            <RotateCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            <span>Reset Spend (₹0)</span>
+          </button>
 
           <button
             onClick={handleResetDemo}

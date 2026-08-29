@@ -115,6 +115,14 @@ export const MCP_TOOLS_DEFINITIONS = [
       required: ["requestId"],
     },
   },
+  {
+    name: "reset_demo_state",
+    description: "Reset cumulative daily spending to ₹0.00 and clear test transactions for testing.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
 
 /**
@@ -343,7 +351,7 @@ export async function executeMCPTool(
 
       // 7. Branch on Decision
       if (policyResult.decision === "ALLOW") {
-        const paymentResult = await mockGateway.createOrder({
+        const paymentResult = await razorpayGateway.createOrder({
           requestId,
           amountPaise: recalculated.totalPaise,
           currency: "INR",
@@ -370,8 +378,9 @@ export async function executeMCPTool(
                   decision: "ALLOW",
                   requestId,
                   totalRupees: recalculated.totalPaise / 100,
+                  provider: paymentResult.provider,
                   paymentOrderId: paymentResult.providerOrderId,
-                  message: "Order within policy limits. Mock payment captured successfully and logged to SHA-256 audit chain.",
+                  message: `Order within autonomous spending limits. Payment Order ${paymentResult.providerOrderId} created in Razorpay Test Mode and logged to SHA-256 audit chain.`,
                 },
                 null,
                 2
@@ -585,6 +594,36 @@ export async function executeMCPTool(
                 status: "CANCELLED",
                 requestId,
                 message: `Request ${requestId} has been successfully cancelled and removed from the pending approvals queue.`,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+
+    if (toolName === "reset_demo_state") {
+      await prisma.paymentAttempt.deleteMany();
+      await prisma.approval.deleteMany();
+      await prisma.policyDecision.deleteMany();
+      await prisma.agentRequest.deleteMany();
+
+      await appendAuditEvent("SYSTEM_DAILY_SPEND_RESET", `reset_${Date.now()}`, {
+        message: "Daily spend reset to ₹0.00 via MCP tool.",
+        origin: "MCP_CONNECTOR",
+        timestamp: new Date().toISOString(),
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: true,
+                dailySpentRupees: 0,
+                message: "Daily spending total and test transactions have been reset to ₹0.00. Ready for new purchases.",
               },
               null,
               2
