@@ -6,6 +6,7 @@ import { CartItem } from "@/lib/schemas";
 interface AgentConsoleProps {
   onExecuteGoal: (goal: string) => Promise<void>;
   loading: boolean;
+  activeDecision?: any;
   agentExecution: {
     goal: string;
     agentId: string;
@@ -19,6 +20,7 @@ interface AgentConsoleProps {
 export function AgentConsole({
   onExecuteGoal,
   loading,
+  activeDecision,
   agentExecution,
 }: AgentConsoleProps) {
   const [inputGoal, setInputGoal] = useState("Buy office supplies under ₹500");
@@ -162,6 +164,83 @@ export function AgentConsole({
         <div className="rounded-xl border border-navy-700 bg-navy-800/40 p-8 text-center">
           <Bot className="h-8 w-8 text-slate-500 mx-auto mb-2" />
           <p className="text-xs text-slate-400">Type an objective above or click a sample goal to run the agent.</p>
+        </div>
+      )}
+
+      {/* Active Agent Policy Decision & Razorpay Link */}
+      {activeDecision && (
+        <div
+          className={`rounded-xl border p-5 space-y-3 transition shadow-lg ${
+            activeDecision.decision === "ALLOW"
+              ? "border-emerald-700/60 bg-emerald-950/30"
+              : activeDecision.decision === "REVIEW"
+              ? "border-amber-700/60 bg-amber-950/30"
+              : "border-red-700/60 bg-red-950/30"
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center space-x-3">
+              <div
+                className={`p-2 rounded-lg ${
+                  activeDecision.decision === "ALLOW"
+                    ? "bg-emerald-500/20 text-emerald-400"
+                    : activeDecision.decision === "REVIEW"
+                    ? "bg-amber-500/20 text-amber-400"
+                    : "bg-red-500/20 text-red-400"
+                }`}
+              >
+                <Bot className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-bold text-slate-100 flex items-center space-x-2">
+                  <span>
+                    {activeDecision.decision === "ALLOW"
+                      ? "AI Purchase Completed & Captured"
+                      : activeDecision.decision === "REVIEW"
+                      ? "Human Approval & Payment Link Required"
+                      : "AI Purchase Blocked by Merchant Policy"}
+                  </span>
+                  <span
+                    className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded uppercase ${
+                      activeDecision.decision === "ALLOW"
+                        ? "bg-emerald-900 text-emerald-300 border border-emerald-700"
+                        : activeDecision.decision === "REVIEW"
+                        ? "bg-amber-900 text-amber-300 border border-amber-700"
+                        : "bg-red-900 text-red-300 border border-red-700"
+                    }`}
+                  >
+                    {activeDecision.decision}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-400 font-mono mt-0.5">
+                  Calculated Total: ₹{((activeDecision.calculatedTotalPaise || 0) / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })} • Request ID: {activeDecision.requestId}
+                </div>
+              </div>
+            </div>
+
+            {/* Direct Razorpay Link in AI Chat */}
+            {activeDecision.paymentLinkUrl && (
+              <a
+                href={activeDecision.paymentLinkUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center space-x-1.5 transition shadow-sm"
+              >
+                <span>Pay via Razorpay Link ↗</span>
+              </a>
+            )}
+          </div>
+
+          {activeDecision.reasons && activeDecision.reasons.length > 0 && (
+            <div className="pt-2 border-t border-navy-750/60 space-y-1">
+              {activeDecision.reasons.map((r: any, idx: number) => (
+                <div key={idx} className="text-xs text-slate-300 flex items-start space-x-2">
+                  <span className="font-mono text-slate-400">[{r.ruleId}]:</span>
+                  <span>{r.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
