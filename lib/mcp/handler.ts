@@ -537,6 +537,14 @@ async function getOrCreateMandateSetupLink(agentId: string) {
           description: reason,
         });
 
+        // Also generate a live Razorpay Payment Link so test cards can be charged on Razorpay's portal
+        const paymentLink = await razorpayGateway.createPaymentLink({
+          requestId,
+          amountPaise: recalculated.totalPaise,
+          currency: "INR",
+          description: reason,
+        });
+
         // Mark request as PAID via pre-authorized mandate token
         await prisma.agentRequest.update({
           where: { id: requestId },
@@ -546,6 +554,8 @@ async function getOrCreateMandateSetupLink(agentId: string) {
         await appendAuditEvent("PAYMENT_ATTEMPT_RECORDED", requestId, {
           provider: "RAZORPAY_CARD_MANDATE",
           providerOrderId: paymentResult.providerOrderId,
+          paymentLinkId: paymentLink.id,
+          paymentLinkUrl: paymentLink.shortUrl,
           status: "CAPTURED",
           mandateTokenId: mandate.tokenId,
           cardLast4: mandate.cardLast4,
@@ -558,6 +568,7 @@ async function getOrCreateMandateSetupLink(agentId: string) {
         await appendAuditEvent("MANDATE_AUTO_DEBIT_CAPTURED", requestId, {
           amountPaise: recalculated.totalPaise,
           mandateTokenId: mandate.tokenId,
+          paymentLinkUrl: paymentLink.shortUrl,
           status: "PAID",
           agentId,
           origin: "MCP_CONNECTOR",
@@ -576,7 +587,8 @@ async function getOrCreateMandateSetupLink(agentId: string) {
                   paymentMethod: `PRE_AUTHORIZED_CARD_MANDATE (${mandate.cardNetwork} •••• ${mandate.cardLast4})`,
                   mandateToken: mandate.tokenId,
                   paymentOrderId: paymentResult.providerOrderId,
-                  message: `Payment of ₹${(recalculated.totalPaise / 100).toFixed(2)} was automatically debited via your pre-authorized card (${mandate.cardNetwork} •••• ${mandate.cardLast4}) using Razorpay token ${mandate.tokenId}. Because the order was within the ₹${(mandate.maxDebitPaise / 100).toLocaleString("en-IN")} autonomous spending limit, no OTP or human approval was required.`,
+                  paymentLinkUrl: paymentLink.shortUrl,
+                  message: `Order of ₹${(recalculated.totalPaise / 100).toFixed(2)} is approved under SpendBoundary policy. Auto-debit authorized via saved card (${mandate.cardNetwork} •••• ${mandate.cardLast4}). To execute a test credit card payment directly on Razorpay's portal, you can also use this link: ${paymentLink.shortUrl}`,
                 },
                 null,
                 2
