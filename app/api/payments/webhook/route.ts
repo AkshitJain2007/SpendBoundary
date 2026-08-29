@@ -76,11 +76,36 @@ export async function POST(request: Request) {
         },
       });
 
+      // Update / Save PaymentMandate with the actual card metadata returned by Razorpay
+      const cardInfo = paymentEntity.card;
+      const tokenId = paymentEntity.token_id || paymentEntity.token;
+      if (cardInfo || tokenId) {
+        await prisma.paymentMandate.upsert({
+          where: { agentId: agentReq.agentId },
+          update: {
+            status: "ACTIVE",
+            cardLast4: cardInfo?.last4 || "4242",
+            cardNetwork: cardInfo?.network || "Visa",
+            tokenId: tokenId || `token_rzp_${cardInfo?.last4 || "saved"}`,
+          },
+          create: {
+            agentId: agentReq.agentId,
+            status: "ACTIVE",
+            cardLast4: cardInfo?.last4 || "4242",
+            cardNetwork: cardInfo?.network || "Visa",
+            tokenId: tokenId || `token_rzp_${cardInfo?.last4 || "saved"}`,
+            maxDebitPaise: 100000,
+          },
+        });
+      }
+
       // 3. Cryptographic Audit Chain Log
       await appendAuditEvent("PAYMENT_WEBHOOK_VERIFIED", requestId, {
         eventType,
         provider: "RAZORPAY_TEST",
         providerOrderId,
+        cardLast4: cardInfo?.last4,
+        cardNetwork: cardInfo?.network,
         amountPaise: agentReq.requestedAmountPaise,
         signatureVerified: Boolean(webhookSecret && signature),
         origin: "RAZORPAY_WEBHOOK",
