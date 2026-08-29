@@ -1,11 +1,15 @@
 import { PrismaClient } from "@prisma/client";
 
-const globalForPrisma = global as unknown as { prisma: PrismaClient };
+export type CustomPrismaClient = PrismaClient & {
+  paymentMandate: any;
+};
 
-export const prisma =
+const globalForPrisma = global as unknown as { prisma: CustomPrismaClient };
+
+export const prisma: CustomPrismaClient =
   globalForPrisma.prisma ||
-  new PrismaClient({
+  (new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
-  });
+  }) as unknown as CustomPrismaClient);
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
