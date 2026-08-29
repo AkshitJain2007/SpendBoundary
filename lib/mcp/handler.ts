@@ -278,7 +278,10 @@ async function getOrCreateMandateSetupLink(agentId: string) {
       if (linkData && (linkData.status === "paid" || (linkData.amount_paid && linkData.amount_paid > 0))) {
         let cardLast4 = "8192";
         let cardNetwork = "Visa";
-        let tokenId = `token_rzp_${mandate.paymentLinkId.replace(/[^a-zA-Z0-9]/g, "")}`;
+        let customerId: string | null = null;
+        // NOTE: a payment id (pay_...) is NOT a re-chargeable card token.
+        let paymentReferenceId = `pay_link_${mandate.paymentLinkId.replace(/[^a-zA-Z0-9]/g, "")}`;
+        let reusableTokenId: string | null = null;
 
         const payments = linkData.payments || [];
         if (payments.length > 0 && payments[0].payment_id) {
@@ -286,8 +289,22 @@ async function getOrCreateMandateSetupLink(agentId: string) {
           if (paymentData) {
             cardLast4 = paymentData.card?.last4 || (paymentData.method === "upi" ? "UPI" : "8192");
             cardNetwork = paymentData.card?.network || paymentData.method?.toUpperCase() || "Visa";
-            tokenId = paymentData.id || tokenId;
+            paymentReferenceId = paymentData.id || paymentReferenceId;
+            customerId = paymentData.customer_id || null;
+            if (typeof paymentData.token_id === "string" && paymentData.token_id.startsWith("token_")) {
+              reusableTokenId = paymentData.token_id;
+            }
           }
+        }
+
+        // Discover a real reusable card token bound to the customer, if one exists.
+        if (!reusableTokenId && customerId) {
+          const tokenCollection = await razorpayGateway.fetchCustomerTokens(customerId);
+          const tokens: any[] = tokenCollection?.items || [];
+          const usable = tokens.find(
+            (t: any) => typeof (t.id || t.token) === "string" && String(t.id || t.token).startsWith("token_")
+          );
+          if (usable) reusableTokenId = String(usable.id || usable.token);
         }
 
         mandate = await prisma.paymentMandate.update({
@@ -296,7 +313,10 @@ async function getOrCreateMandateSetupLink(agentId: string) {
             status: "ACTIVE",
             cardLast4,
             cardNetwork,
-            tokenId,
+            customerId,
+            // Store the genuine reusable token when available; otherwise keep the
+            // payment reference so audits stay truthful (it cannot be re-charged).
+            tokenId: reusableTokenId || paymentReferenceId,
           },
         });
 
@@ -305,7 +325,9 @@ async function getOrCreateMandateSetupLink(agentId: string) {
           status: "ACTIVE",
           cardLast4,
           cardNetwork,
-          tokenId,
+          customerId,
+          hasReusableToken: Boolean(reusableTokenId),
+          tokenId: reusableTokenId || paymentReferenceId,
           paymentLinkId: mandate.paymentLinkId,
           origin: "RAZORPAY_API_RECONCILIATION",
         });
@@ -529,61 +551,150 @@ async function getOrCreateMandateSetupLink(agentId: string) {
           };
         }
 
-        const paymentResult = await razorpayGateway.createOrder({
-          requestId,
-          amountPaise: recalculated.totalPaise,
-          currency: "INR",
-          idempotencyKey,
-          description: reason,
-        });
-
-        // Mark request as PAID via pre-authorized mandate token
-        await prisma.agentRequest.update({
-          where: { id: requestId },
-          data: { status: "PAID" },
-        });
-
-        await appendAuditEvent("PAYMENT_ATTEMPT_RECORDED", requestId, {
-          provider: "RAZORPAY_CARD_MANDATE",
-          providerOrderId: paymentResult.providerOrderId,
-          status: "CAPTURED",
-          mandateTokenId: mandate.tokenId,
-          cardLast4: mandate.cardLast4,
-          cardNetwork: mandate.cardNetwork,
-          idempotencyKey,
-          amountPaise: paymentResult.amountPaise,
-          origin: "MCP_CONNECTOR",
-        });
-
-        await appendAuditEvent("MANDATE_AUTO_DEBIT_CAPTURED", requestId, {
-          amountPaise: recalculated.totalPaise,
-          mandateTokenId: mandate.tokenId,
-          status: "PAID",
-          agentId,
-          origin: "MCP_CONNECTOR",
-        });
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  status: "APPROVED_AND_PAID",
-                  decision: "ALLOW",
-                  requestId,
-                  totalRupees: recalculated.totalPaise / 100,
-                  paymentMethod: `PRE_AUTHORIZED_CARD_MANDATE (${mandate.cardNetwork} •••• ${mandate.cardLast4})`,
-                  mandateToken: mandate.tokenId,
-                  paymentOrderId: paymentResult.providerOrderId,
-                  message: `Done — Payment of ₹${(recalculated.totalPaise / 100).toFixed(2)} was automatically completed and debited to your pre-authorized card (${mandate.cardNetwork} •••• ${mandate.cardLast4}) via token ${mandate.tokenId}. Because the order was within your ₹${(mandate.maxDebitPaise / 100).toLocaleString("en-IN")} autonomous spending limit, no OTP or manual confirmation was required.`,
-                },
-                null,
-                2
-              ),
+        try {
+          const paymentResult = await razorpayGateway.createOrder({
+            requestId,
+            amountPaise: recalculated.totalPaise,
+            currency: "INR",
+            idempotencyKey,
+            description: reason,
+            mandate: {
+              agentId,
+              customerId: mandate.customerId,
+              tokenId: mandate.tokenId,
+              cardLast4: mandate.cardLast4,
+              cardNetwork: mandate.cardNetwork,
+              email: mandate.customerEmail,
             },
-          ],
-        };
+          });
+
+          // Companion status update (gateway already marked PAID on real capture)
+          await prisma.agentRequest.update({
+            where: { id: requestId },
+            data: { status: "PAID" },
+          });
+
+          await appendAuditEvent("PAYMENT_ATTEMPT_RECORDED", requestId, {
+            provider: "RAZORPAY_CARD_MANDATE",
+            providerOrderId: paymentResult.providerOrderId,
+            status: "CAPTURED",
+            mandateTokenId: mandate.tokenId,
+            cardLast4: mandate.cardLast4,
+            cardNetwork: mandate.cardNetwork,
+            idempotencyKey,
+            amountPaise: paymentResult.amountPaise,
+            origin: "MCP_CONNECTOR",
+          });
+
+          await appendAuditEvent("MANDATE_AUTO_DEBIT_CAPTURED", requestId, {
+            amountPaise: recalculated.totalPaise,
+            mandateTokenId: mandate.tokenId,
+            status: "PAID",
+            agentId,
+            origin: "MCP_CONNECTOR",
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    status: "APPROVED_AND_PAID",
+                    decision: "ALLOW",
+                    requestId,
+                    totalRupees: recalculated.totalPaise / 100,
+                    isPaid: true,
+                    paymentMethod: `PRE_AUTHORIZED_CARD_MANDATE (${mandate.cardNetwork} •••• ${mandate.cardLast4})`,
+                    mandateToken: mandate.tokenId,
+                    paymentOrderId: paymentResult.providerOrderId,
+                    message: `Done — Payment of ₹${(recalculated.totalPaise / 100).toFixed(2)} was automatically completed and debited to your pre-authorized card (${mandate.cardNetwork} •••• ${mandate.cardLast4}) via Razorpay payment ${paymentResult.providerOrderId}. Because the order was within your ₹${(mandate.maxDebitPaise / 100).toLocaleString("en-IN")} autonomous spending limit, no OTP or manual confirmation was required. You can verify this payment in your Razorpay dashboard.`,
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        } catch (debitErr: any) {
+          // HONEST FAILURE PATH: the auto-debit did NOT go through. No money moved.
+          // Fabricate nothing - record the failure, issue a REAL hosted payment
+          // link, and instruct the agent to hand it to the user.
+          const errorCode = debitErr?.code || "PAYMENT_EXECUTION_FAILED";
+          const errorMessage = debitErr?.message || "Unknown payment execution error";
+          console.error(`[MCP Auto-Debit Failed for ${requestId}] (${errorCode}):`, errorMessage);
+
+          await appendAuditEvent("PAYMENT_AUTO_DEBIT_FAILED", requestId, {
+            agentId,
+            amountPaise: recalculated.totalPaise,
+            errorCode,
+            errorMessage,
+            mandateTokenReference: mandate.tokenId,
+            origin: "MCP_CONNECTOR",
+          });
+
+          let fallbackLink: any = null;
+          try {
+            fallbackLink = await razorpayGateway.createPaymentLink({
+              requestId,
+              amountPaise: recalculated.totalPaise,
+              currency: "INR",
+              description: reason,
+            });
+
+            const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+            await prisma.approval.upsert({
+              where: { requestId },
+              update: { decision: "PENDING", expiresAt },
+              create: { requestId, decision: "PENDING", expiresAt },
+            });
+
+            await prisma.agentRequest.update({
+              where: { id: requestId },
+              data: { status: "AWAITING_PAYMENT" },
+            });
+
+            await appendAuditEvent("MANUAL_PAYMENT_LINK_ISSUED", requestId, {
+              paymentLinkId: fallbackLink.id,
+              paymentLinkUrl: fallbackLink.shortUrl,
+              amountPaise: recalculated.totalPaise,
+              reasonForFallback: errorCode,
+              origin: "MCP_CONNECTOR",
+            });
+          } catch (linkErr: any) {
+            console.error(`[Fallback payment link also failed for ${requestId}]:`, linkErr?.message);
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    status: "AUTO_DEBIT_FAILED",
+                    decision: "ALLOW",
+                    isPaid: false,
+                    cardCharged: false,
+                    requestId,
+                    totalRupees: recalculated.totalPaise / 100,
+                    errorCode,
+                    paymentLinkUrl: fallbackLink?.shortUrl || null,
+                    actionRequired: fallbackLink
+                      ? "PRESENT_PAYMENT_LINK_TO_USER"
+                      : "ASK_USER_TO_RETRY_LATER",
+                    message: `⚠️ The automatic card charge did NOT go through (${errorMessage}). IMPORTANT: no money was debited from the card and the previous "success" was NOT a real payment.${
+                      fallbackLink
+                        ? ` A real Razorpay payment link was generated instead — please ask the user to complete the payment of ₹${(recalculated.totalPaise / 100).toFixed(2)} here: ${fallbackLink.shortUrl}. Call check_approval_status afterwards to confirm capture.`
+                        : " Ask the user to retry the purchase later."
+                    }`,
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
       }
 
       if (policyResult.decision === "REVIEW") {
@@ -689,7 +800,11 @@ async function getOrCreateMandateSetupLink(agentId: string) {
       let paymentLinkId: string | undefined;
 
       const attemptEvent = await prisma.auditEvent.findFirst({
-        where: { requestId, eventType: { in: ["PAYMENT_ATTEMPT_RECORDED", "HUMAN_APPROVAL_QUEUED"] } },
+        where: {
+          requestId,
+          eventType: { in: ["PAYMENT_ATTEMPT_RECORDED", "HUMAN_APPROVAL_QUEUED", "MANUAL_PAYMENT_LINK_ISSUED"] },
+        },
+        orderBy: { createdAt: "desc" },
       });
 
       if (attemptEvent) {
