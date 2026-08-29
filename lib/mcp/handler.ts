@@ -269,6 +269,24 @@ export async function executeMCPTool(
         where: { id: "policy_default" },
       });
 
+      const agentId = String(args.agentId || "chatgpt_user");
+      let mandate = await prisma.paymentMandate.findUnique({ where: { agentId } });
+      if (!mandate) {
+        mandate = await prisma.paymentMandate.findFirst({ where: { status: "ACTIVE" } });
+      }
+      if (!mandate) {
+        mandate = await prisma.paymentMandate.create({
+          data: {
+            agentId,
+            status: "ACTIVE",
+            maxDebitPaise: 100000,
+            tokenId: "token_rzp_preauth_card",
+            cardLast4: "4242",
+            cardNetwork: "Visa",
+          },
+        });
+      }
+
       return {
         content: [
           {
@@ -282,6 +300,13 @@ export async function executeMCPTool(
                 humanApprovalThresholdRupees: (dbPolicy?.approvalThresholdPaise || 100000) / 100,
                 velocityLimit: `${dbPolicy?.velocityCount || 3} requests per ${dbPolicy?.velocityWindowSeconds || 60}s`,
                 allowedCategories: dbPolicy ? JSON.parse(dbPolicy.allowedCategories) : [],
+                paymentMandate: {
+                  status: mandate?.status || "ACTIVE",
+                  cardDetails: `${mandate?.cardNetwork || "Visa"} ending in •••• ${mandate?.cardLast4 || "4242"}`,
+                  mandateToken: mandate?.tokenId || "token_rzp_preauth_card",
+                  maxSingleDebitRupees: (mandate?.maxDebitPaise || 100000) / 100,
+                  description: "Pre-authorized tokenized card on file. Sub-limit purchases under ₹1,000 are debited automatically without OTP.",
+                },
               },
               null,
               2
