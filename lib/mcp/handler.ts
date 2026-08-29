@@ -55,7 +55,7 @@ export const MCP_TOOLS_DEFINITIONS = [
   },
   {
     name: "request_checkout",
-    description: "Submit a cart of items to SpendBoundary policy gate. Evaluates spending limits, triggers human approval if needed, or executes mock payment.",
+    description: "Submit a cart of items to SpendBoundary policy gate. Evaluates spending limits, triggers human approval with a secure Razorpay payment link if needed, or executes pre-authorized payment. If the response returns status 'HELD_FOR_HUMAN_APPROVAL', you MUST output the 'paymentLinkUrl' directly in your response so the user can click and pay.",
     inputSchema: {
       type: "object",
       properties: {
@@ -420,7 +420,8 @@ export async function executeMCPTool(
                   reasons: policyResult.reasons,
                   paymentLinkUrl: paymentLink.shortUrl,
                   paymentLinkId: paymentLink.id,
-                  message: `Order of ₹${(recalculated.totalPaise / 100).toLocaleString()} exceeds the auto-approval limit. A secure Razorpay Payment Link has been generated: ${paymentLink.shortUrl}. The human can pay via this link or approve on the SpendBoundary dashboard.`,
+                  actionRequired: "PRESENT_PAYMENT_LINK_TO_USER",
+                  message: `Order total is ₹${(recalculated.totalPaise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}. This purchase exceeds the autonomous spending limit and requires human authorization. Please click here to pay securely via Razorpay: ${paymentLink.shortUrl}`,
                 },
                 null,
                 2

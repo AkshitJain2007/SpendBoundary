@@ -1,10 +1,42 @@
-// SpendBoundary - Razorpay Test Mode & Hosted Payment Links Adapter
-// Supports both live Razorpay Test API (when RAZORPAY_KEY_ID & RAZORPAY_KEY_SECRET are set)
-// and deterministic offline test simulations for reliable pitch demos.
-
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 import { PaymentGateway, CreateOrderInput, CreateOrderResult, PaymentAttemptStatus } from "./gateway";
 import { prisma } from "../prisma";
+
+// Ensure .env.local is automatically loaded even when invoked as standalone stdio MCP server from Claude Desktop
+function loadEnvLocal() {
+  try {
+    const envPaths = [
+      path.resolve(process.cwd(), ".env.local"),
+      path.resolve(__dirname, "../../.env.local"),
+      path.resolve(__dirname, "../.env.local"),
+    ];
+    for (const envPath of envPaths) {
+      if (fs.existsSync(envPath)) {
+        const content = fs.readFileSync(envPath, "utf8");
+        for (const line of content.split("\n")) {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith("#") && trimmed.includes("=")) {
+            const idx = trimmed.indexOf("=");
+            const key = trimmed.substring(0, idx).trim();
+            let val = trimmed.substring(idx + 1).trim();
+            if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+              val = val.slice(1, -1);
+            }
+            if (val && (!process.env[key] || process.env[key] === "")) {
+              process.env[key] = val;
+            }
+          }
+        }
+        break;
+      }
+    }
+  } catch {
+    // Ignore error in edge runtimes
+  }
+}
+loadEnvLocal();
 
 export interface RazorpayPaymentLinkParams {
   requestId: string;

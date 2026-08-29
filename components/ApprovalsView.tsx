@@ -125,6 +125,25 @@ export function ApprovalsView({ approvals, onAction, loading }: ApprovalsViewPro
                   </div>
                 </div>
 
+                {/* Buyer Payment Link Info for Merchant */}
+                {approval.paymentLinkUrl && (
+                  <div className="p-2.5 rounded-lg bg-navy-950 border border-navy-800 flex items-center justify-between text-xs">
+                    <div className="flex items-center space-x-2 text-slate-400">
+                      <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping"></span>
+                      <span className="font-semibold text-slate-300">Customer Payment Link:</span>
+                      <span className="font-mono text-emerald-400 truncate max-w-xs">{approval.paymentLinkUrl}</span>
+                    </div>
+                    <a
+                      href={approval.paymentLinkUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[11px] text-brand-blue hover:underline font-semibold shrink-0"
+                    >
+                      Open Link ↗
+                    </a>
+                  </div>
+                )}
+
                 {/* Reviewer Comment & Action Buttons */}
                 <div className="pt-2 flex flex-col sm:flex-row gap-3 items-center justify-between">
                   <input
@@ -136,15 +155,6 @@ export function ApprovalsView({ approvals, onAction, loading }: ApprovalsViewPro
                   />
 
                   <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
-                    <a
-                      href={approval.paymentLinkUrl || `https://rzp.io/l/plink_${approval.requestId.replace(/[^a-zA-Z0-9]/g, "")}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-3.5 py-2 rounded-lg bg-brand-blue/20 hover:bg-brand-blue/30 text-brand-blue border border-brand-blue/40 text-xs font-semibold flex items-center space-x-1.5 transition"
-                    >
-                      <span>Pay via Razorpay ↗</span>
-                    </a>
-
                     <button
                       onClick={() => onAction(approval.requestId, "REJECTED", commentInputs[approval.requestId])}
                       disabled={loading}
