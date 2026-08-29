@@ -85,7 +85,7 @@ export const MCP_TOOLS_DEFINITIONS = [
   },
   {
     name: "check_approval_status",
-    description: "Check the status of an order that was held in the Human Approval Queue.",
+    description: "Check the status of an order that was held in the Human Approval Queue. If paymentLinkUrl is present and status is pending, you MUST provide the paymentLinkUrl directly to the user so they can click and pay.",
     inputSchema: {
       type: "object",
       properties: {
@@ -478,6 +478,29 @@ export async function executeMCPTool(
         };
       }
 
+      // Find the generated payment link from audit events or gateway
+      const queuedEvent = await prisma.auditEvent.findFirst({
+        where: { requestId: args.requestId, eventType: "HUMAN_APPROVAL_QUEUED" },
+      });
+
+      let paymentLinkUrl: string | undefined;
+      if (queuedEvent) {
+        try {
+          const payload = JSON.parse(queuedEvent.payloadJson);
+          paymentLinkUrl = payload.paymentLinkUrl;
+        } catch {}
+      }
+
+      if (!paymentLinkUrl && approval.decision === "PENDING") {
+        const link = await razorpayGateway.createPaymentLink({
+          requestId: args.requestId,
+          amountPaise: approval.request.requestedAmountPaise,
+          currency: "INR",
+          description: approval.request.reason,
+        });
+        paymentLinkUrl = link.shortUrl;
+      }
+
       return {
         content: [
           {
@@ -485,11 +508,17 @@ export async function executeMCPTool(
             text: JSON.stringify(
               {
                 requestId: approval.requestId,
-                status: approval.decision,
+                status: approval.decision === "PENDING" ? "PENDING_PAYMENT_OR_APPROVAL" : approval.decision,
                 requestedAmountRupees: approval.request.requestedAmountPaise / 100,
-                comment: approval.comment || "Pending reviewer action",
                 isPaid: approval.request.status === "PAID",
-                paymentAttempts: approval.request.paymentAttempts,
+                paymentLinkUrl: paymentLinkUrl || null,
+                actionRequired: approval.decision === "PENDING" ? "PLEASE_PROVIDE_PAYMENT_LINK_TO_USER" : "NONE",
+                message:
+                  approval.decision === "PENDING"
+                    ? `This order is pending human authorization or payment. The user can complete the payment immediately using this secure Razorpay link: ${paymentLinkUrl}`
+                    : approval.decision === "APPROVED"
+                    ? "Order has been approved and paid."
+                    : "Order was rejected or cancelled.",
               },
               null,
               2
