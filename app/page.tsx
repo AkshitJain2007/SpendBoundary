@@ -44,28 +44,44 @@ export default function HomePage() {
     fetchInitialData();
   }, []);
 
+  // Safe Fetch Helper to prevent "Unexpected token <" JSON parsing errors on HTML error responses
+  const safeFetchJson = async (url: string, options?: RequestInit) => {
+    try {
+      const res = await fetch(url, options);
+      const text = await res.text();
+      try {
+        const data = JSON.parse(text);
+        return { ok: res.ok, data, status: res.status };
+      } catch (parseErr) {
+        console.warn(`[API ${url}] Non-JSON response received (HTTP ${res.status}):`, text.substring(0, 150));
+        return { ok: false, data: null, error: `Server returned non-JSON response (HTTP ${res.status})` };
+      }
+    } catch (netErr: any) {
+      console.error(`[API ${url}] Network fetch error:`, netErr);
+      return { ok: false, data: null, error: netErr?.message || "Network error" };
+    }
+  };
+
   const fetchInitialData = async () => {
     try {
       // 1. Fetch Catalogue
-      const catRes = await fetch("/api/catalogue");
-      const catData = await catRes.json();
-      if (catData.products) setProducts(catData.products);
+      const cat = await safeFetchJson("/api/catalogue");
+      if (cat.ok && cat.data?.products) setProducts(cat.data.products);
 
       // 2. Fetch Policy
-      const polRes = await fetch("/api/policy");
-      const polData = await polRes.json();
-      if (polData.policy) setPolicy(polData.policy);
+      const pol = await safeFetchJson("/api/policy");
+      if (pol.ok && pol.data?.policy) setPolicy(pol.data.policy);
 
       // 3. Fetch Approvals
-      const appRes = await fetch("/api/approvals");
-      const appData = await appRes.json();
-      if (appData.approvals) setApprovals(appData.approvals);
+      const app = await safeFetchJson("/api/approvals");
+      if (app.ok && app.data?.approvals) setApprovals(app.data.approvals);
 
       // 4. Fetch Audit
-      const audRes = await fetch("/api/audit");
-      const audData = await audRes.json();
-      if (audData.events) setAuditEvents(audData.events);
-      if (audData.verification) setAuditVerification(audData.verification);
+      const aud = await safeFetchJson("/api/audit");
+      if (aud.ok && aud.data) {
+        if (aud.data.events) setAuditEvents(aud.data.events);
+        if (aud.data.verification) setAuditVerification(aud.data.verification);
+      }
     } catch (err) {
       console.error("Failed to load initial data:", err);
     }
@@ -73,14 +89,14 @@ export default function HomePage() {
 
   const refreshAuditAndApprovals = async () => {
     try {
-      const audRes = await fetch("/api/audit");
-      const audData = await audRes.json();
-      if (audData.events) setAuditEvents(audData.events);
-      if (audData.verification) setAuditVerification(audData.verification);
+      const aud = await safeFetchJson("/api/audit");
+      if (aud.ok && aud.data) {
+        if (aud.data.events) setAuditEvents(aud.data.events);
+        if (aud.data.verification) setAuditVerification(aud.data.verification);
+      }
 
-      const appRes = await fetch("/api/approvals");
-      const appData = await appRes.json();
-      if (appData.approvals) setApprovals(appData.approvals);
+      const app = await safeFetchJson("/api/approvals");
+      if (app.ok && app.data?.approvals) setApprovals(app.data.approvals);
     } catch (err) {
       console.error("Refresh error:", err);
     }
@@ -90,13 +106,16 @@ export default function HomePage() {
   const handleResetDemo = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/demo/seed", { method: "POST" });
-      const data = await res.json();
-      setActiveDecision(null);
-      setAgentExecution(null);
-      await fetchInitialData();
-      setStatusMessage("Demo database reset and re-seeded cleanly.");
-      setTimeout(() => setStatusMessage(null), 3000);
+      const res = await safeFetchJson("/api/demo/seed", { method: "POST" });
+      if (res.ok) {
+        setActiveDecision(null);
+        setAgentExecution(null);
+        await fetchInitialData();
+        setStatusMessage("Demo database reset and re-seeded cleanly.");
+        setTimeout(() => setStatusMessage(null), 3000);
+      } else {
+        setStatusMessage(res.error || "Failed to reset demo database");
+      }
     } catch (err) {
       console.error("Reset error:", err);
     } finally {
@@ -110,7 +129,7 @@ export default function HomePage() {
     try {
       if (scenarioKey === "safe_500") {
         // Safe Purchase: Notebook (350) + Pen Set (150) = 500
-        const res = await fetch("/api/checkout", {
+        const res = await safeFetchJson("/api/checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -122,12 +141,11 @@ export default function HomePage() {
             reason: "Replenish standard office notebooks and writing pens.",
           }),
         });
-        const data = await res.json();
-        setActiveDecision(data);
+        if (res.data) setActiveDecision(res.data);
         setStatusMessage("Scenario 1 executed: ₹500 purchase evaluated as ALLOW and captured.");
       } else if (scenarioKey === "overspend_8000") {
         // Overspend: Chair (8,000) > 2,000 cap
-        const res = await fetch("/api/checkout", {
+        const res = await safeFetchJson("/api/checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -136,12 +154,11 @@ export default function HomePage() {
             reason: "High-end ergonomic task chair for executive desk.",
           }),
         });
-        const data = await res.json();
-        setActiveDecision(data);
+        if (res.data) setActiveDecision(res.data);
         setStatusMessage("Scenario 2 executed: ₹8,000 purchase DENIED (exceeds ₹2,000 max order cap).");
       } else if (scenarioKey === "review_1500") {
         // Review: Desk Lamp (1,500) > 1,000 threshold
-        const res = await fetch("/api/checkout", {
+        const res = await safeFetchJson("/api/checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -150,12 +167,11 @@ export default function HomePage() {
             reason: "Smart dimmable desk illumination for late-night office work.",
           }),
         });
-        const data = await res.json();
-        setActiveDecision(data);
+        if (res.data) setActiveDecision(res.data);
         setStatusMessage("Scenario 3 executed: ₹1,500 purchase requires REVIEW (queued for human approval).");
       } else if (scenarioKey === "restricted_item") {
         // Restricted item
-        const res = await fetch("/api/checkout", {
+        const res = await safeFetchJson("/api/checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -164,14 +180,13 @@ export default function HomePage() {
             reason: "Experimental crypto computation key.",
           }),
         });
-        const data = await res.json();
-        setActiveDecision(data);
+        if (res.data) setActiveDecision(res.data);
         setStatusMessage("Scenario 4 executed: Restricted item DENIED before payment creation.");
       } else if (scenarioKey === "velocity_breach") {
         // Fire 4 rapid requests in parallel
         setStatusMessage("Firing rapid requests to test velocity limiter...");
         const promises = [1, 2, 3, 4].map((idx) =>
-          fetch("/api/checkout", {
+          safeFetchJson("/api/checkout", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -179,12 +194,12 @@ export default function HomePage() {
               agentId: "agent_procurebot_01",
               reason: `Rapid request test #${idx}`,
             }),
-          }).then((r) => r.json())
+          })
         );
 
         const results = await Promise.all(promises);
         const lastResult = results[results.length - 1];
-        setActiveDecision(lastResult);
+        if (lastResult.data) setActiveDecision(lastResult.data);
         setStatusMessage("Scenario 5 executed: 4th rapid request DENIED by velocity rate limiter.");
       } else if (scenarioKey === "retry_dedupe") {
         // 1. Initial attempt with simulated timeout
@@ -192,7 +207,7 @@ export default function HomePage() {
         const testIdemKey = `idem_retry_${Date.now()}`;
 
         setStatusMessage("Step 1: Sending payment request that encounters a simulated timeout...");
-        await fetch("/api/checkout", {
+        await safeFetchJson("/api/checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -207,7 +222,7 @@ export default function HomePage() {
 
         // 2. Retry with the SAME idempotency key
         setStatusMessage("Step 2: Client retries with the SAME idempotency key (deduplication check)...");
-        const retryRes = await fetch("/api/checkout", {
+        const retryRes = await safeFetchJson("/api/checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -220,14 +235,12 @@ export default function HomePage() {
           }),
         });
 
-        const retryData = await retryRes.json();
-        setActiveDecision(retryData);
+        if (retryRes.data) setActiveDecision(retryRes.data);
         setStatusMessage("Scenario 6 executed: Retry matched existing idempotency key without duplicate payment!");
       } else if (scenarioKey === "audit_tamper") {
         // Trigger simulated tamper
-        const tamperRes = await fetch("/api/audit/tamper", { method: "POST" });
-        const tamperData = await tamperRes.json();
-        if (tamperData.verification) setAuditVerification(tamperData.verification);
+        const tamperRes = await safeFetchJson("/api/audit/tamper", { method: "POST" });
+        if (tamperRes.data?.verification) setAuditVerification(tamperRes.data.verification);
         setActiveTab("audit");
         setStatusMessage("Scenario 7 executed: Deliberate audit tampering simulated. Hash chain flags corruption!");
       }
@@ -244,28 +257,26 @@ export default function HomePage() {
   const handleExecuteAgentGoal = async (goal: string) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/agent", {
+      const res = await safeFetchJson("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal }),
       });
-      const data = await res.json();
-      if (data.execution) {
-        setAgentExecution(data.execution);
+      if (res.data?.execution) {
+        setAgentExecution(res.data.execution);
 
         // Automatically send the agent's proposed cart to server policy checkout
-        const checkoutRes = await fetch("/api/checkout", {
+        const checkoutRes = await safeFetchJson("/api/checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            items: data.execution.proposedCart,
-            agentId: data.execution.agentId,
-            reason: data.execution.statedReason,
+            items: res.data.execution.proposedCart,
+            agentId: res.data.execution.agentId,
+            reason: res.data.execution.statedReason,
           }),
         });
 
-        const checkoutData = await checkoutRes.json();
-        setActiveDecision(checkoutData);
+        if (checkoutRes.data) setActiveDecision(checkoutRes.data);
         await refreshAuditAndApprovals();
       }
     } catch (err) {
@@ -273,8 +284,6 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  };
-
   // Human Approval Action
   const handleApprovalAction = async (
     requestId: string,
@@ -283,7 +292,7 @@ export default function HomePage() {
   ) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/approvals", {
+      const res = await safeFetchJson("/api/approvals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -294,7 +303,6 @@ export default function HomePage() {
         }),
       });
 
-      const data = await res.json();
       await refreshAuditAndApprovals();
       setStatusMessage(`Approval action [${decision}] registered for request ${requestId}.`);
     } catch (err) {
@@ -308,13 +316,12 @@ export default function HomePage() {
   const handleUpdatePolicy = async (updatedFields: any) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/policy", {
+      const res = await safeFetchJson("/api/policy", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updatedFields),
       });
-      const data = await res.json();
-      if (data.policy) setPolicy(data.policy);
+      if (res.data?.policy) setPolicy(res.data.policy);
     } catch (err) {
       console.error("Update policy error:", err);
     } finally {
@@ -326,10 +333,9 @@ export default function HomePage() {
   const handleVerifyAudit = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/audit");
-      const data = await res.json();
-      if (data.events) setAuditEvents(data.events);
-      if (data.verification) setAuditVerification(data.verification);
+      const res = await safeFetchJson("/api/audit");
+      if (res.data?.events) setAuditEvents(res.data.events);
+      if (res.data?.verification) setAuditVerification(res.data.verification);
     } catch (err) {
       console.error("Audit fetch error:", err);
     } finally {
@@ -340,9 +346,8 @@ export default function HomePage() {
   const handleSimulateTamper = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/audit/tamper", { method: "POST" });
-      const data = await res.json();
-      if (data.verification) setAuditVerification(data.verification);
+      const res = await safeFetchJson("/api/audit/tamper", { method: "POST" });
+      if (res.data?.verification) setAuditVerification(res.data.verification);
       await refreshAuditAndApprovals();
     } catch (err: any) {
       alert(err?.message || "Ensure at least one transaction has run before testing tamper.");
