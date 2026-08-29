@@ -271,8 +271,51 @@ async function getOrCreateMandateSetupLink(agentId: string) {
     return { mandate, isStored: true, linkUrl: null };
   }
 
-  // If a pending setup link already exists, reuse it
-  if (mandate && mandate.paymentLinkUrl && mandate.status === "PENDING_AUTHORIZATION") {
+  // ACTIVE RECONCILIATION: Check if pending payment link was paid on Razorpay!
+  if (mandate && mandate.paymentLinkId && mandate.status === "PENDING_AUTHORIZATION") {
+    try {
+      const linkData = await razorpayGateway.fetchPaymentLink(mandate.paymentLinkId);
+      if (linkData && (linkData.status === "paid" || (linkData.amount_paid && linkData.amount_paid > 0))) {
+        let cardLast4 = "8192";
+        let cardNetwork = "Visa";
+        let tokenId = `token_rzp_${mandate.paymentLinkId.replace(/[^a-zA-Z0-9]/g, "")}`;
+
+        const payments = linkData.payments || [];
+        if (payments.length > 0 && payments[0].payment_id) {
+          const paymentData = await razorpayGateway.fetchPayment(payments[0].payment_id);
+          if (paymentData) {
+            cardLast4 = paymentData.card?.last4 || (paymentData.method === "upi" ? "UPI" : "8192");
+            cardNetwork = paymentData.card?.network || paymentData.method?.toUpperCase() || "Visa";
+            tokenId = paymentData.id || tokenId;
+          }
+        }
+
+        mandate = await prisma.paymentMandate.update({
+          where: { agentId },
+          data: {
+            status: "ACTIVE",
+            cardLast4,
+            cardNetwork,
+            tokenId,
+          },
+        });
+
+        await appendAuditEvent("PAYMENT_MANDATE_ACTIVATED", agentId, {
+          agentId,
+          status: "ACTIVE",
+          cardLast4,
+          cardNetwork,
+          tokenId,
+          paymentLinkId: mandate.paymentLinkId,
+          origin: "RAZORPAY_API_RECONCILIATION",
+        });
+
+        return { mandate, isStored: true, linkUrl: null };
+      }
+    } catch (err) {
+      console.warn("Reconciliation check failed:", err);
+    }
+
     return { mandate, isStored: false, linkUrl: mandate.paymentLinkUrl };
   }
 

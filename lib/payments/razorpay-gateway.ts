@@ -286,6 +286,46 @@ export class RazorpayGatewayAdapter implements PaymentGateway {
   }
 
   /**
+   * Fetches real-time status of a hosted payment link from Razorpay API
+   */
+  async fetchPaymentLink(linkId: string): Promise<any | null> {
+    if (!this.isLiveConfigured()) return null;
+    try {
+      const keyId = this.getKeyId()!.trim();
+      const keySecret = this.getKeySecret()!.trim();
+      const authHeader = `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`;
+
+      const res = await fetch(`https://api.razorpay.com/v1/payment_links/${linkId}`, {
+        headers: { Authorization: authHeader },
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Fetches payment details (card last4, network, method) from Razorpay API
+   */
+  async fetchPayment(paymentId: string): Promise<any | null> {
+    if (!this.isLiveConfigured()) return null;
+    try {
+      const keyId = this.getKeyId()!.trim();
+      const keySecret = this.getKeySecret()!.trim();
+      const authHeader = `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`;
+
+      const res = await fetch(`https://api.razorpay.com/v1/payments/${paymentId}`, {
+        headers: { Authorization: authHeader },
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Cryptographically verifies Razorpay Webhook HMAC-SHA256 signature
    */
   verifyWebhookSignature(rawBody: string, signature: string, secret?: string): boolean {
