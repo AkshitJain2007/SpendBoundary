@@ -218,7 +218,8 @@ export async function executeMCPTool(
     }
 
     if (toolName === "request_checkout") {
-      const items = Array.isArray(args.items) ? args.items : [];
+      const rawItems = args.items;
+      const items = Array.isArray(rawItems) ? rawItems : (rawItems ? [rawItems] : []);
       const reason = String(args.reason || "Procurement request via MCP agent");
       const agentId = String(args.agentId || "mcp_external_agent");
       const requestId = `req_mcp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
