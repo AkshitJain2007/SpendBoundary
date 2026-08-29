@@ -264,28 +264,56 @@ export async function executeMCPTool(
       };
     }
 
+// Helper: Retrieve active card mandate or generate a live ₹1 Razorpay setup link
+async function getOrCreateMandateSetupLink(agentId: string) {
+  let mandate = await prisma.paymentMandate.findUnique({ where: { agentId } });
+  if (mandate && mandate.status === "ACTIVE" && mandate.cardLast4) {
+    return { mandate, isStored: true, linkUrl: null };
+  }
+
+  // If a pending setup link already exists, reuse it
+  if (mandate && mandate.paymentLinkUrl && mandate.status === "PENDING_AUTHORIZATION") {
+    return { mandate, isStored: false, linkUrl: mandate.paymentLinkUrl };
+  }
+
+  // Generate a live ₹1 Razorpay Setup Link
+  const setupLink = await razorpayGateway.createPaymentLink({
+    requestId: `mandate_auth_${agentId.replace(/[^a-zA-Z0-9]/g, "")}_${Date.now()}`,
+    amountPaise: 100, // ₹1 authorization
+    currency: "INR",
+    description: "₹1 Card Verification & Autonomous AI Agent Pre-Authorization",
+  });
+
+  mandate = await prisma.paymentMandate.upsert({
+    where: { agentId },
+    update: {
+      status: "PENDING_AUTHORIZATION",
+      paymentLinkUrl: setupLink.shortUrl,
+      paymentLinkId: setupLink.id,
+      cardLast4: "",
+      cardNetwork: "",
+    },
+    create: {
+      agentId,
+      status: "PENDING_AUTHORIZATION",
+      paymentLinkUrl: setupLink.shortUrl,
+      paymentLinkId: setupLink.id,
+      cardLast4: "",
+      cardNetwork: "",
+      maxDebitPaise: 100000,
+    },
+  });
+
+  return { mandate, isStored: false, linkUrl: setupLink.shortUrl };
+}
+
     if (toolName === "get_policy_limits") {
       const dbPolicy = await prisma.policy.findFirst({
         where: { id: "policy_default" },
       });
 
       const agentId = String(args.agentId || "chatgpt_user");
-      let mandate = await prisma.paymentMandate.findUnique({ where: { agentId } });
-      if (!mandate) {
-        mandate = await prisma.paymentMandate.findFirst({ where: { status: "ACTIVE" } });
-      }
-      if (!mandate) {
-        mandate = await prisma.paymentMandate.create({
-          data: {
-            agentId,
-            status: "ACTIVE",
-            maxDebitPaise: 100000,
-            tokenId: "token_rzp_preauth_card",
-            cardLast4: "4242",
-            cardNetwork: "Visa",
-          },
-        });
-      }
+      const { mandate, isStored, linkUrl } = await getOrCreateMandateSetupLink(agentId);
 
       return {
         content: [
@@ -300,13 +328,22 @@ export async function executeMCPTool(
                 humanApprovalThresholdRupees: (dbPolicy?.approvalThresholdPaise || 100000) / 100,
                 velocityLimit: `${dbPolicy?.velocityCount || 3} requests per ${dbPolicy?.velocityWindowSeconds || 60}s`,
                 allowedCategories: dbPolicy ? JSON.parse(dbPolicy.allowedCategories) : [],
-                paymentMandate: {
-                  status: mandate?.status || "ACTIVE",
-                  cardDetails: `${mandate?.cardNetwork || "Visa"} ending in •••• ${mandate?.cardLast4 || "4242"}`,
-                  mandateToken: mandate?.tokenId || "token_rzp_preauth_card",
-                  maxSingleDebitRupees: (mandate?.maxDebitPaise || 100000) / 100,
-                  description: "Pre-authorized tokenized card on file. Sub-limit purchases under ₹1,000 are debited automatically without OTP.",
-                },
+                paymentMandate: isStored
+                  ? {
+                      cardStored: true,
+                      status: "ACTIVE",
+                      cardDetails: `${mandate.cardNetwork} ending in •••• ${mandate.cardLast4}`,
+                      mandateToken: mandate.tokenId,
+                      maxSingleDebitRupees: mandate.maxDebitPaise / 100,
+                      description: "Pre-authorized card on file. Autonomous sub-limit orders under ₹1,000 are debited automatically without OTP.",
+                    }
+                  : {
+                      cardStored: false,
+                      status: "NO_CARD_STORED",
+                      mandateSetupLinkUrl: linkUrl,
+                      actionRequired: "PLEASE_AUTHORIZE_CARD_FIRST",
+                      message: `No payment card is stored on file. To enable autonomous purchasing without OTP, please authorize your card using this ₹1 Razorpay link: ${linkUrl}. Once authorized, your card will be securely saved for future sub-limit orders.`,
+                    },
               },
               null,
               2
@@ -423,22 +460,30 @@ export async function executeMCPTool(
 
       // 7. Branch on Decision
       if (policyResult.decision === "ALLOW") {
-        // Fetch or auto-provision active card mandate for this AI agent
-        let mandate = await prisma.paymentMandate.findUnique({
-          where: { agentId },
-        });
+        const { mandate, isStored, linkUrl } = await getOrCreateMandateSetupLink(agentId);
 
-        if (!mandate) {
-          mandate = await prisma.paymentMandate.create({
-            data: {
-              agentId,
-              status: "ACTIVE",
-              maxDebitPaise: 100000, // ₹1,000 max single debit without OTP
-              tokenId: `token_rzp_${agentId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 10)}_card`,
-              cardLast4: "4242",
-              cardNetwork: "Visa",
-            },
-          });
+        if (!isStored) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    status: "SETUP_CARD_MANDATE_REQUIRED",
+                    decision: "PENDING_CARD_AUTHORIZATION",
+                    cardStored: false,
+                    requestId,
+                    totalRupees: recalculated.totalPaise / 100,
+                    mandateSetupLinkUrl: linkUrl,
+                    actionRequired: "PLEASE_AUTHORIZE_CARD_FIRST",
+                    message: `Your order of ₹${(recalculated.totalPaise / 100).toFixed(2)} is approved under policy limits, but no payment card is stored on file yet. Please click this ₹1 Razorpay Authorization Link to save your card: ${linkUrl}. Once you complete the ₹1 verification, your card will be saved securely for automatic sub-limit purchases.`,
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
         }
 
         const paymentResult = await razorpayGateway.createOrder({
@@ -742,38 +787,32 @@ export async function executeMCPTool(
     }
 
     if (toolName === "get_payment_mandate_status") {
-      const agentId = String(args.agentId || "claude_desktop_user");
-      let mandate = await prisma.paymentMandate.findUnique({ where: { agentId } });
-      if (!mandate) {
-        mandate = await prisma.paymentMandate.create({
-          data: {
-            agentId,
-            status: "ACTIVE",
-            maxDebitPaise: 100000,
-            tokenId: `token_rzp_${agentId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 10)}_card`,
-            cardLast4: "4242",
-            cardNetwork: "Visa",
-          },
-        });
-      }
+      const agentId = String(args.agentId || "chatgpt_user");
+      const { mandate, isStored, linkUrl } = await getOrCreateMandateSetupLink(agentId);
 
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify(
-              {
-                agentId: mandate.agentId,
-                status: mandate.status,
-                mandateToken: mandate.tokenId,
-                cardDetails: `${mandate.cardNetwork} ending in •••• ${mandate.cardLast4}`,
-                maxSingleDebitRupees: mandate.maxDebitPaise / 100,
-                policyCapRupees: 1000,
-                message:
-                  mandate.status === "ACTIVE"
-                    ? `Pre-authorized ${mandate.cardNetwork} card (•••• ${mandate.cardLast4}) is ACTIVE. Autonomous orders up to ₹${mandate.maxDebitPaise / 100} are charged automatically without OTP.`
-                    : "No active card mandate on file. Purchases require manual authorization links.",
-              },
+              isStored
+                ? {
+                    cardStored: true,
+                    status: "ACTIVE",
+                    agentId: mandate.agentId,
+                    cardDetails: `${mandate.cardNetwork} ending in •••• ${mandate.cardLast4}`,
+                    mandateToken: mandate.tokenId,
+                    maxSingleDebitRupees: mandate.maxDebitPaise / 100,
+                    message: `Pre-authorized ${mandate.cardNetwork} card (•••• ${mandate.cardLast4}) is ACTIVE on file. Autonomous sub-limit orders up to ₹${mandate.maxDebitPaise / 100} are charged automatically without OTP.`,
+                  }
+                : {
+                    cardStored: false,
+                    status: "NO_CARD_STORED",
+                    agentId: mandate.agentId,
+                    mandateSetupLinkUrl: linkUrl,
+                    actionRequired: "PRESENT_AUTHORIZATION_LINK_TO_USER",
+                    message: `No payment card is stored on file. To enable autonomous purchasing without OTP, please authorize your card using this ₹1 Razorpay link: ${linkUrl}. Once authorized, your card will be saved securely for future sub-limit orders.`,
+                  },
               null,
               2
             ),
