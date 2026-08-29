@@ -530,6 +530,7 @@ export default function HomePage() {
             onExecuteGoal={handleExecuteAgentGoal}
             loading={loading}
             agentExecution={agentExecution}
+            activeDecision={activeDecision}
           />
         )}
 

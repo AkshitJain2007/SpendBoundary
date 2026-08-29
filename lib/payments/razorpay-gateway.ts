@@ -38,9 +38,9 @@ export class RazorpayGatewayAdapter implements PaymentGateway {
   }
 
   private isLiveConfigured(): boolean {
-    const keyId = this.getKeyId();
-    const keySecret = this.getKeySecret();
-    return Boolean(keyId && keySecret && keyId.startsWith("rzp_test_"));
+    const keyId = this.getKeyId()?.trim();
+    const keySecret = this.getKeySecret()?.trim();
+    return Boolean(keyId && keySecret && keyId.length > 5 && keySecret.length > 5);
   }
 
   /**
@@ -69,8 +69,8 @@ export class RazorpayGatewayAdapter implements PaymentGateway {
     // 2. Real Razorpay Test Mode API Call
     if (this.isLiveConfigured()) {
       try {
-        const keyId = this.getKeyId()!;
-        const keySecret = this.getKeySecret()!;
+        const keyId = this.getKeyId()!.trim();
+        const keySecret = this.getKeySecret()!.trim();
         const authHeader = `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`;
 
         const rzpResponse = await fetch("https://api.razorpay.com/v1/orders", {
@@ -82,7 +82,7 @@ export class RazorpayGatewayAdapter implements PaymentGateway {
           body: JSON.stringify({
             amount: amountPaise,
             currency,
-            receipt: requestId,
+            receipt: requestId.substring(0, 40),
             notes: {
               idempotencyKey,
               description: description || "SpendBoundary AI Purchase",
@@ -92,8 +92,9 @@ export class RazorpayGatewayAdapter implements PaymentGateway {
         });
 
         if (!rzpResponse.ok) {
-          const errData = await rzpResponse.json();
-          throw new Error(errData?.error?.description || "Razorpay API error");
+          const errText = await rzpResponse.text();
+          console.error(`[Razorpay Order API Error ${rzpResponse.status}]:`, errText);
+          throw new Error(`Razorpay Order API failed: ${errText}`);
         }
 
         const rzpOrder = await rzpResponse.json();
@@ -122,7 +123,7 @@ export class RazorpayGatewayAdapter implements PaymentGateway {
           amountPaise,
           idempotencyKey,
           createdAt: paymentRecord.createdAt.toISOString(),
-          message: "Live Razorpay Test Order created and captured successfully.",
+          message: `Live Razorpay Test Order ${rzpOrder.id} created and captured successfully.`,
         };
       } catch (err: any) {
         console.warn("Razorpay Live API failed, falling back to simulated test mode:", err.message);
@@ -176,13 +177,20 @@ export class RazorpayGatewayAdapter implements PaymentGateway {
    * Generates a Hosted Razorpay Payment Link (https://rzp.io/l/...) for Human REVIEW flows
    */
   async createPaymentLink(params: RazorpayPaymentLinkParams): Promise<RazorpayPaymentLinkResult> {
-    const { requestId, amountPaise, currency = "INR", description, customerName = "Apex Admin", customerEmail = "admin@apexsupplies.demo" } = params;
+    const {
+      requestId,
+      amountPaise,
+      currency = "INR",
+      description,
+      customerName = "Apex Customer",
+      customerEmail = "customer@apexsupplies.demo",
+    } = params;
 
     // Real Razorpay Payment Link API Call
     if (this.isLiveConfigured()) {
       try {
-        const keyId = this.getKeyId()!;
-        const keySecret = this.getKeySecret()!;
+        const keyId = this.getKeyId()!.trim();
+        const keySecret = this.getKeySecret()!.trim();
         const authHeader = `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`;
 
         const rzpResponse = await fetch("https://api.razorpay.com/v1/payment_links", {
@@ -194,19 +202,24 @@ export class RazorpayGatewayAdapter implements PaymentGateway {
           body: JSON.stringify({
             amount: amountPaise,
             currency,
-            description: `[SpendBoundary Approval] ${description}`,
+            accept_partial: false,
+            description: `[SpendBoundary Approval] ${description}`.substring(0, 200),
             customer: {
               name: customerName,
               email: customerEmail,
+              contact: "+919999999999",
             },
             notify: { sms: false, email: false },
             reminder_enable: false,
-            reference_id: requestId,
+            notes: {
+              requestId,
+            },
           }),
         });
 
         if (rzpResponse.ok) {
           const linkData = await rzpResponse.json();
+          console.log(`[Razorpay Payment Link Created]: ${linkData.short_url} (${linkData.id})`);
           return {
             id: linkData.id,
             shortUrl: linkData.short_url,
@@ -216,13 +229,16 @@ export class RazorpayGatewayAdapter implements PaymentGateway {
             provider: "RAZORPAY_TEST",
             createdAt: new Date().toISOString(),
           };
+        } else {
+          const errText = await rzpResponse.text();
+          console.error(`[Razorpay Payment Link API Error ${rzpResponse.status}]:`, errText);
         }
       } catch (err: any) {
         console.warn("Failed to create live Razorpay Payment Link, falling back to test link:", err.message);
       }
     }
 
-    // Simulated Razorpay Payment Link
+    // Simulated Razorpay Payment Link (Offline / Fallback)
     const linkId = `plink_${requestId.replace(/[^a-zA-Z0-9]/g, "")}`;
     const simulatedShortUrl = `https://rzp.io/l/${linkId}`;
 
