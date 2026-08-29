@@ -12,6 +12,7 @@ import {
   Zap,
   Activity,
   Layers,
+  Network,
 } from "lucide-react";
 
 import { DemoControls } from "@/components/DemoControls";
@@ -21,10 +22,11 @@ import { PolicyEditor } from "@/components/PolicyEditor";
 import { ApprovalsView, ApprovalRecord } from "@/components/ApprovalsView";
 import { AuditTimeline, AuditEventItem } from "@/components/AuditTimeline";
 import { CatalogueGrid, ProductItem } from "@/components/CatalogueGrid";
+import { MCPGuide } from "@/components/MCPGuide";
 import { VerificationResult } from "@/lib/audit-chain";
 
 export default function HomePage() {
-  const [activeTab, setActiveTab] = useState<"overview" | "agent" | "catalogue" | "policy" | "approvals" | "audit">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "agent" | "catalogue" | "policy" | "approvals" | "audit" | "mcp">("overview");
 
   // Live Data State
   const [products, setProducts] = useState<ProductItem[]>([]);
@@ -284,6 +286,8 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
+  };
+
   // Human Approval Action
   const handleApprovalAction = async (
     requestId: string,
@@ -428,6 +432,7 @@ export default function HomePage() {
               badge: pendingApprovalsCount > 0,
             },
             { id: "audit", label: "Audit & Tamper Replay", icon: RefreshCw },
+            { id: "mcp", label: "MCP Connector", icon: Network },
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -559,6 +564,11 @@ export default function HomePage() {
             onSimulateTamper={handleSimulateTamper}
             loading={loading}
           />
+        )}
+
+        {/* Tab 7: MCP Connector */}
+        {activeTab === "mcp" && (
+          <MCPGuide />
         )}
       </main>
 
