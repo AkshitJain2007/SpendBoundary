@@ -55,7 +55,7 @@ export const MCP_TOOLS_DEFINITIONS = [
   },
   {
     name: "request_checkout",
-    description: "Submit a cart of items to SpendBoundary policy gate. Evaluates spending limits, triggers human approval with a secure Razorpay payment link if needed, or executes pre-authorized payment. If the response returns status 'HELD_FOR_HUMAN_APPROVAL', you MUST output the 'paymentLinkUrl' directly in your response so the user can click and pay.",
+    description: "Submit a cart of items to SpendBoundary policy gate. Evaluates spending limits and generates a secure Razorpay Payment Link. You MUST ALWAYS output the 'paymentLinkUrl' directly in your response as a clickable link so the user can click and complete the payment on Razorpay.",
     inputSchema: {
       type: "object",
       properties: {
@@ -537,7 +537,7 @@ async function getOrCreateMandateSetupLink(agentId: string) {
           description: reason,
         });
 
-        // Also generate a live Razorpay Payment Link so test cards can be charged on Razorpay's portal
+        // Generate a live Razorpay Payment Link so test cards can be charged directly on Razorpay's portal
         const paymentLink = await razorpayGateway.createPaymentLink({
           requestId,
           amountPaise: recalculated.totalPaise,
@@ -545,32 +545,23 @@ async function getOrCreateMandateSetupLink(agentId: string) {
           description: reason,
         });
 
-        // Mark request as PAID via pre-authorized mandate token
+        // Request state remains ALLOWED awaiting payment capture from Razorpay
         await prisma.agentRequest.update({
           where: { id: requestId },
-          data: { status: "PAID" },
+          data: { status: "ALLOWED" },
         });
 
         await appendAuditEvent("PAYMENT_ATTEMPT_RECORDED", requestId, {
-          provider: "RAZORPAY_CARD_MANDATE",
+          provider: "RAZORPAY_TEST",
           providerOrderId: paymentResult.providerOrderId,
           paymentLinkId: paymentLink.id,
           paymentLinkUrl: paymentLink.shortUrl,
-          status: "CAPTURED",
+          status: "CREATED",
           mandateTokenId: mandate.tokenId,
           cardLast4: mandate.cardLast4,
           cardNetwork: mandate.cardNetwork,
           idempotencyKey,
           amountPaise: paymentResult.amountPaise,
-          origin: "MCP_CONNECTOR",
-        });
-
-        await appendAuditEvent("MANDATE_AUTO_DEBIT_CAPTURED", requestId, {
-          amountPaise: recalculated.totalPaise,
-          mandateTokenId: mandate.tokenId,
-          paymentLinkUrl: paymentLink.shortUrl,
-          status: "PAID",
-          agentId,
           origin: "MCP_CONNECTOR",
         });
 
@@ -580,15 +571,15 @@ async function getOrCreateMandateSetupLink(agentId: string) {
               type: "text",
               text: JSON.stringify(
                 {
-                  status: "APPROVED_AND_PAID",
+                  status: "APPROVED_AWAITING_PAYMENT",
                   decision: "ALLOW",
                   requestId,
                   totalRupees: recalculated.totalPaise / 100,
-                  paymentMethod: `PRE_AUTHORIZED_CARD_MANDATE (${mandate.cardNetwork} •••• ${mandate.cardLast4})`,
-                  mandateToken: mandate.tokenId,
+                  cardAuthorized: `${mandate.cardNetwork} ending in •••• ${mandate.cardLast4}`,
                   paymentOrderId: paymentResult.providerOrderId,
                   paymentLinkUrl: paymentLink.shortUrl,
-                  message: `Order of ₹${(recalculated.totalPaise / 100).toFixed(2)} is approved under SpendBoundary policy. Auto-debit authorized via saved card (${mandate.cardNetwork} •••• ${mandate.cardLast4}). To execute a test credit card payment directly on Razorpay's portal, you can also use this link: ${paymentLink.shortUrl}`,
+                  actionRequired: "MUST_PRESENT_PAYMENT_LINK_TO_USER",
+                  message: `Order for ₹${(recalculated.totalPaise / 100).toFixed(2)} is APPROVED under SpendBoundary policy limits. Please click this link to complete the payment on Razorpay: ${paymentLink.shortUrl}`,
                 },
                 null,
                 2
@@ -678,45 +669,76 @@ async function getOrCreateMandateSetupLink(agentId: string) {
     }
 
     if (toolName === "check_approval_status") {
-      const approval = await prisma.approval.findUnique({
-        where: { requestId: args.requestId },
-        include: { request: { include: { paymentAttempts: true } } },
+      const requestId = String(args.requestId || "");
+      const agentReq = await prisma.agentRequest.findUnique({
+        where: { id: requestId },
+        include: { approval: true, paymentAttempts: true },
       });
 
-      if (!approval) {
+      if (!agentReq) {
         return {
           isError: true,
           content: [
             {
               type: "text",
-              text: `No approval record found for request ID: ${args.requestId}`,
+              text: `No purchase request found with ID: ${requestId}`,
             },
           ],
         };
       }
 
-      // Find the generated payment link from audit events or gateway
-      const queuedEvent = await prisma.auditEvent.findFirst({
-        where: { requestId: args.requestId, eventType: "HUMAN_APPROVAL_QUEUED" },
+      // Find the generated payment link from payment attempt, audit events, or gateway
+      let paymentLinkUrl: string | undefined;
+      let paymentLinkId: string | undefined;
+
+      const attemptEvent = await prisma.auditEvent.findFirst({
+        where: { requestId, eventType: { in: ["PAYMENT_ATTEMPT_RECORDED", "HUMAN_APPROVAL_QUEUED"] } },
       });
 
-      let paymentLinkUrl: string | undefined;
-      if (queuedEvent) {
+      if (attemptEvent) {
         try {
-          const payload = JSON.parse(queuedEvent.payloadJson);
+          const payload = JSON.parse(attemptEvent.payloadJson);
           paymentLinkUrl = payload.paymentLinkUrl;
+          paymentLinkId = payload.paymentLinkId;
         } catch {}
       }
 
-      if (!paymentLinkUrl && approval.decision === "PENDING") {
-        const link = await razorpayGateway.createPaymentLink({
-          requestId: args.requestId,
-          amountPaise: approval.request.requestedAmountPaise,
-          currency: "INR",
-          description: approval.request.reason,
-        });
-        paymentLinkUrl = link.shortUrl;
+      // LIVE RAZORPAY RECONCILIATION: Query Razorpay API if status is not yet PAID
+      if (paymentLinkId && agentReq.status !== "PAID") {
+        try {
+          const linkData = await razorpayGateway.fetchPaymentLink(paymentLinkId);
+          if (linkData && (linkData.status === "paid" || (linkData.amount_paid && linkData.amount_paid > 0))) {
+            await prisma.agentRequest.update({
+              where: { id: requestId },
+              data: { status: "PAID" },
+            });
+
+            if (agentReq.approval) {
+              await prisma.approval.update({
+                where: { requestId },
+                data: {
+                  decision: "APPROVED",
+                  comment: "Automatically approved via verified Razorpay payment capture.",
+                  reviewerId: "razorpay_reconciliation",
+                },
+              });
+            }
+
+            await appendAuditEvent("PAYMENT_CAPTURED", requestId, {
+              status: "PAID",
+              paymentLinkId,
+              amountPaise: agentReq.requestedAmountPaise,
+              origin: "RAZORPAY_RECONCILIATION",
+            });
+
+            agentReq.status = "PAID";
+          }
+        } catch (err) {
+          console.warn("Reconciliation error in check_approval_status:", err);
+        }
       }
+
+      const isPaid = agentReq.status === "PAID";
 
       return {
         content: [
@@ -724,18 +746,15 @@ async function getOrCreateMandateSetupLink(agentId: string) {
             type: "text",
             text: JSON.stringify(
               {
-                requestId: approval.requestId,
-                status: approval.decision === "PENDING" ? "PENDING_PAYMENT_OR_APPROVAL" : approval.decision,
-                requestedAmountRupees: approval.request.requestedAmountPaise / 100,
-                isPaid: approval.request.status === "PAID",
-                paymentLinkUrl: paymentLinkUrl || null,
-                actionRequired: approval.decision === "PENDING" ? "PLEASE_PROVIDE_PAYMENT_LINK_TO_USER" : "NONE",
-                message:
-                  approval.decision === "PENDING"
-                    ? `This order is pending human authorization or payment. The user can complete the payment immediately using this secure Razorpay link: ${paymentLinkUrl}`
-                    : approval.decision === "APPROVED"
-                    ? "Order has been approved and paid."
-                    : "Order was rejected or cancelled.",
+                requestId: agentReq.id,
+                status: isPaid ? "PAID_AND_CAPTURED" : agentReq.status,
+                requestedAmountRupees: agentReq.requestedAmountPaise / 100,
+                isPaid,
+                paymentLinkUrl: isPaid ? null : (paymentLinkUrl || null),
+                actionRequired: isPaid ? "NONE" : "PLEASE_COMPLETE_PAYMENT",
+                message: isPaid
+                  ? `Payment of ₹${(agentReq.requestedAmountPaise / 100).toFixed(2)} has been successfully captured and verified on Razorpay!`
+                  : `Order is approved under SpendBoundary policy, but payment has not been completed on Razorpay yet. Please complete the payment using this link: ${paymentLinkUrl}`,
               },
               null,
               2
