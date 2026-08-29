@@ -55,7 +55,7 @@ export const MCP_TOOLS_DEFINITIONS = [
   },
   {
     name: "request_checkout",
-    description: "Submit a cart of items to SpendBoundary policy gate. Evaluates spending limits and generates a secure Razorpay Payment Link. You MUST ALWAYS output the 'paymentLinkUrl' directly in your response as a clickable link so the user can click and complete the payment on Razorpay.",
+    description: "Submit a cart of items to SpendBoundary policy gate. If the order is within spending limits (ALLOW), it automatically completes the payment via the pre-authorized card mandate without OTP. If the order exceeds spending limits (HELD_FOR_HUMAN_APPROVAL), it generates a Razorpay payment link and requires the user to authorize it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -537,31 +537,29 @@ async function getOrCreateMandateSetupLink(agentId: string) {
           description: reason,
         });
 
-        // Generate a live Razorpay Payment Link so test cards can be charged directly on Razorpay's portal
-        const paymentLink = await razorpayGateway.createPaymentLink({
-          requestId,
-          amountPaise: recalculated.totalPaise,
-          currency: "INR",
-          description: reason,
-        });
-
-        // Request state remains ALLOWED awaiting payment capture from Razorpay
+        // Mark request as PAID via pre-authorized mandate token
         await prisma.agentRequest.update({
           where: { id: requestId },
-          data: { status: "ALLOWED" },
+          data: { status: "PAID" },
         });
 
         await appendAuditEvent("PAYMENT_ATTEMPT_RECORDED", requestId, {
-          provider: "RAZORPAY_TEST",
+          provider: "RAZORPAY_CARD_MANDATE",
           providerOrderId: paymentResult.providerOrderId,
-          paymentLinkId: paymentLink.id,
-          paymentLinkUrl: paymentLink.shortUrl,
-          status: "CREATED",
+          status: "CAPTURED",
           mandateTokenId: mandate.tokenId,
           cardLast4: mandate.cardLast4,
           cardNetwork: mandate.cardNetwork,
           idempotencyKey,
           amountPaise: paymentResult.amountPaise,
+          origin: "MCP_CONNECTOR",
+        });
+
+        await appendAuditEvent("MANDATE_AUTO_DEBIT_CAPTURED", requestId, {
+          amountPaise: recalculated.totalPaise,
+          mandateTokenId: mandate.tokenId,
+          status: "PAID",
+          agentId,
           origin: "MCP_CONNECTOR",
         });
 
@@ -571,15 +569,14 @@ async function getOrCreateMandateSetupLink(agentId: string) {
               type: "text",
               text: JSON.stringify(
                 {
-                  status: "APPROVED_AWAITING_PAYMENT",
+                  status: "APPROVED_AND_PAID",
                   decision: "ALLOW",
                   requestId,
                   totalRupees: recalculated.totalPaise / 100,
-                  cardAuthorized: `${mandate.cardNetwork} ending in •••• ${mandate.cardLast4}`,
+                  paymentMethod: `PRE_AUTHORIZED_CARD_MANDATE (${mandate.cardNetwork} •••• ${mandate.cardLast4})`,
+                  mandateToken: mandate.tokenId,
                   paymentOrderId: paymentResult.providerOrderId,
-                  paymentLinkUrl: paymentLink.shortUrl,
-                  actionRequired: "MUST_PRESENT_PAYMENT_LINK_TO_USER",
-                  message: `Order for ₹${(recalculated.totalPaise / 100).toFixed(2)} is APPROVED under SpendBoundary policy limits. Please click this link to complete the payment on Razorpay: ${paymentLink.shortUrl}`,
+                  message: `Done — Payment of ₹${(recalculated.totalPaise / 100).toFixed(2)} was automatically completed and debited to your pre-authorized card (${mandate.cardNetwork} •••• ${mandate.cardLast4}) via token ${mandate.tokenId}. Because the order was within your ₹${(mandate.maxDebitPaise / 100).toLocaleString("en-IN")} autonomous spending limit, no OTP or manual confirmation was required.`,
                 },
                 null,
                 2
