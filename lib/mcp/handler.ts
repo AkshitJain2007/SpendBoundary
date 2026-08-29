@@ -5,6 +5,7 @@ import { prisma } from "../prisma";
 import { recalculateCartTotal } from "../cart-total";
 import { evaluatePolicy, PolicyRuleConfig } from "../policy-engine";
 import { mockGateway } from "../payments/mock-gateway";
+import { razorpayGateway } from "../payments/razorpay-gateway";
 import { appendAuditEvent } from "../audit-chain";
 
 export interface MCPToolCallResult {
@@ -372,9 +373,19 @@ export async function executeMCPTool(
           },
         });
 
+        // Generate Hosted Razorpay Payment Link for human user
+        const paymentLink = await razorpayGateway.createPaymentLink({
+          requestId,
+          amountPaise: recalculated.totalPaise,
+          currency: "INR",
+          description: reason,
+        });
+
         await appendAuditEvent("HUMAN_APPROVAL_QUEUED", requestId, {
           approvalId: approval.id,
           amountPaise: recalculated.totalPaise,
+          paymentLinkId: paymentLink.id,
+          paymentLinkUrl: paymentLink.shortUrl,
           origin: "MCP_CONNECTOR",
         });
 
@@ -389,7 +400,9 @@ export async function executeMCPTool(
                   requestId,
                   totalRupees: recalculated.totalPaise / 100,
                   reasons: policyResult.reasons,
-                  message: `Order of ₹${(recalculated.totalPaise / 100).toLocaleString()} exceeds auto-approval threshold. It is now held in the merchant human approval queue. Check back with tool 'check_approval_status' once approved.`,
+                  paymentLinkUrl: paymentLink.shortUrl,
+                  paymentLinkId: paymentLink.id,
+                  message: `Order of ₹${(recalculated.totalPaise / 100).toLocaleString()} exceeds the auto-approval limit. A secure Razorpay Payment Link has been generated: ${paymentLink.shortUrl}. The human can pay via this link or approve on the SpendBoundary dashboard.`,
                 },
                 null,
                 2

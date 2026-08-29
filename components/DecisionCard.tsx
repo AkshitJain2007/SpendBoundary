@@ -13,6 +13,7 @@ export interface DecisionCardProps {
     limitPaise?: number;
   }>;
   policyVersion?: string;
+  paymentLinkUrl?: string;
   payment?: {
     status: string;
     providerOrderId?: string;
@@ -28,6 +29,7 @@ export function DecisionCard({
   reasons = [],
   policyVersion = "v1.0",
   payment,
+  paymentLinkUrl,
   onApproveClick,
 }: DecisionCardProps) {
   if (!decision) {
@@ -121,20 +123,36 @@ export function DecisionCard({
               {decision === "ALLOW"
                 ? `Order ID: ${payment?.providerOrderId || "N/A"} (${payment?.status || "CAPTURED"})`
                 : decision === "REVIEW"
-                ? "Payment order will not be created until a human operator approves."
+                ? paymentLinkUrl
+                  ? `Hosted Razorpay Payment Link: ${paymentLinkUrl}`
+                  : "Payment order will not be created until a human operator approves."
                 : "No payment attempt or provider order was generated."}
             </div>
           </div>
         </div>
 
-        {decision === "REVIEW" && onApproveClick && (
-          <button
-            onClick={onApproveClick}
-            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-slate-950 font-semibold text-xs transition"
-          >
-            <span>Review in Queue</span>
-            <ArrowRight className="h-3.5 w-3.5" />
-          </button>
+        {decision === "REVIEW" && (
+          <div className="flex items-center space-x-2">
+            {paymentLinkUrl && (
+              <a
+                href={paymentLinkUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition"
+              >
+                <span>Pay via Razorpay Link ↗</span>
+              </a>
+            )}
+            {onApproveClick && (
+              <button
+                onClick={onApproveClick}
+                className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-slate-950 font-semibold text-xs transition"
+              >
+                <span>Review in Queue</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>

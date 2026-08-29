@@ -17,6 +17,7 @@ export interface ApprovalRecord {
   decision: "PENDING" | "APPROVED" | "REJECTED" | "EXPIRED";
   reviewerId?: string;
   comment?: string;
+  paymentLinkUrl?: string;
   expiresAt: string;
   createdAt: string;
 }
@@ -135,6 +136,15 @@ export function ApprovalsView({ approvals, onAction, loading }: ApprovalsViewPro
                   />
 
                   <div className="flex items-center space-x-2 w-full sm:w-auto justify-end">
+                    <a
+                      href={approval.paymentLinkUrl || `https://rzp.io/l/plink_${approval.requestId.replace(/[^a-zA-Z0-9]/g, "")}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3.5 py-2 rounded-lg bg-brand-blue/20 hover:bg-brand-blue/30 text-brand-blue border border-brand-blue/40 text-xs font-semibold flex items-center space-x-1.5 transition"
+                    >
+                      <span>Pay via Razorpay ↗</span>
+                    </a>
+
                     <button
                       onClick={() => onAction(approval.requestId, "REJECTED", commentInputs[approval.requestId])}
                       disabled={loading}

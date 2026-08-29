@@ -490,6 +490,7 @@ export default function HomePage() {
                 reasons={activeDecision?.reasons || []}
                 policyVersion={activeDecision?.policyVersion || policy?.version || "v1.0"}
                 payment={activeDecision?.payment || null}
+                paymentLinkUrl={activeDecision?.paymentLinkUrl}
                 onApproveClick={() => setActiveTab("approvals")}
               />
             </div>
