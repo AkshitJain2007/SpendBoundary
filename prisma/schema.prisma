@@ -94,3 +94,18 @@ model AuditEvent {
   eventHash    String   // SHA256(previousHash + payloadJson + eventType + createdAt)
   createdAt    DateTime @default(now())
 }
+
+model PaymentMandate {
+  id              String   @id @default(cuid())
+  agentId         String   @unique
+  customerEmail   String   @default("user@spendboundary.ai")
+  status          String   @default("ACTIVE") // ACTIVE, PENDING_AUTHORIZATION, REVOKED
+  maxDebitPaise   Int      @default(100000) // ₹1,000 max single debit without human OTP
+  tokenId         String   @default("token_rzp_preauth_card")
+  cardLast4       String   @default("4242")
+  cardNetwork     String   @default("Visa")
+  paymentLinkId   String?
+  paymentLinkUrl  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
