@@ -207,7 +207,7 @@ export class RazorpayGatewayAdapter implements PaymentGateway {
             customer: {
               name: customerName,
               email: customerEmail,
-              contact: "+919999999999",
+              contact: "+919876543210",
             },
             notify: { sms: false, email: false },
             reminder_enable: false,

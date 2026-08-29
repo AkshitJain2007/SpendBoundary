@@ -97,6 +97,24 @@ export const MCP_TOOLS_DEFINITIONS = [
       required: ["requestId"],
     },
   },
+  {
+    name: "cancel_request",
+    description: "Cancel or delete a pending purchase request / approval before payment capture.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        requestId: {
+          type: "string",
+          description: "The request ID of the pending purchase to cancel/delete",
+        },
+        reason: {
+          type: "string",
+          description: "Optional justification for cancellation",
+        },
+      },
+      required: ["requestId"],
+    },
+  },
 ];
 
 /**
@@ -471,6 +489,72 @@ export async function executeMCPTool(
                 comment: approval.comment || "Pending reviewer action",
                 isPaid: approval.request.status === "PAID",
                 paymentAttempts: approval.request.paymentAttempts,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+
+    if (toolName === "cancel_request") {
+      const requestId = String(args.requestId || "");
+      const cancelReason = String(args.reason || "Cancelled by user/agent request");
+
+      const agentReq = await prisma.agentRequest.findUnique({
+        where: { id: requestId },
+        include: { approval: true },
+      });
+
+      if (!agentReq) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `No purchase request found with ID "${requestId}".` }],
+        };
+      }
+
+      if (agentReq.status === "PAID") {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `Cannot cancel request ${requestId} because payment has already been captured.` }],
+        };
+      }
+
+      // Update request status to REJECTED/CANCELLED
+      await prisma.agentRequest.update({
+        where: { id: requestId },
+        data: { status: "REJECTED" },
+      });
+
+      if (agentReq.approval) {
+        await prisma.approval.update({
+          where: { requestId },
+          data: {
+            decision: "REJECTED",
+            comment: cancelReason,
+            reviewerId: "agent_cancellation",
+          },
+        });
+      }
+
+      // Append cancellation to SHA-256 audit chain
+      await appendAuditEvent("PURCHASE_CANCELLED", requestId, {
+        reason: cancelReason,
+        cancelledAt: new Date().toISOString(),
+        origin: "MCP_CONNECTOR",
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: true,
+                status: "CANCELLED",
+                requestId,
+                message: `Request ${requestId} has been successfully cancelled and removed from the pending approvals queue.`,
               },
               null,
               2
