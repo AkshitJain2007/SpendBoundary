@@ -151,7 +151,7 @@ npm run dev
 ## 🖥️ Claude Desktop MCP Configuration
 
 To connect Claude Desktop to the SpendBoundary MCP server, add the following to `claude_desktop_config.json`:
->>>>>>> d693aa37d54777a3bb34cb10e0cca9a5b68f26f9
+
 
 ```json
 {
@@ -161,11 +161,8 @@ To connect Claude Desktop to the SpendBoundary MCP server, add the following to 
       "args": [
         "-y",
         "tsx",
-<<<<<<< HEAD
         "<ABSOLUTE_PATH_TO_SPENDBOUNDARY>/scripts/mcp-server.ts"
-=======
         "<PROJECT_ROOT_PATH>/scripts/mcp-server.ts"
->>>>>>> d693aa37d54777a3bb34cb10e0cca9a5b68f26f9
       ]
     }
   }
