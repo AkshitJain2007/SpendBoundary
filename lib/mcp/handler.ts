@@ -5,7 +5,6 @@ import { prisma } from "../prisma";
 import { recalculateCartTotal } from "../cart-total";
 import { evaluatePolicy, PolicyRuleConfig } from "../policy-engine";
 import { mockGateway } from "../payments/mock-gateway";
-import { razorpayGateway } from "../payments/razorpay-gateway";
 import { appendAuditEvent } from "../audit-chain";
 
 export interface MCPToolCallResult {
@@ -55,7 +54,7 @@ export const MCP_TOOLS_DEFINITIONS = [
   },
   {
     name: "request_checkout",
-    description: "Submit a cart of items to SpendBoundary policy gate. If the order is within spending limits (ALLOW), it automatically completes the payment via the pre-authorized card mandate without OTP. If the order exceeds spending limits (HELD_FOR_HUMAN_APPROVAL), it generates a Razorpay payment link and requires the user to authorize it.",
+    description: "Submit a cart of items to SpendBoundary policy gate. Evaluates spending limits, triggers human approval if needed, or executes mock payment.",
     inputSchema: {
       type: "object",
       properties: {
@@ -85,7 +84,7 @@ export const MCP_TOOLS_DEFINITIONS = [
   },
   {
     name: "check_approval_status",
-    description: "Check the status of an order that was held in the Human Approval Queue. If paymentLinkUrl is present and status is pending, you MUST provide the paymentLinkUrl directly to the user so they can click and pay.",
+    description: "Check the status of an order that was held in the Human Approval Queue.",
     inputSchema: {
       type: "object",
       properties: {
@@ -95,79 +94,6 @@ export const MCP_TOOLS_DEFINITIONS = [
         },
       },
       required: ["requestId"],
-    },
-  },
-  {
-    name: "cancel_request",
-    description: "Cancel or delete a pending purchase request / approval before payment capture.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        requestId: {
-          type: "string",
-          description: "The request ID of the pending purchase to cancel/delete",
-        },
-        reason: {
-          type: "string",
-          description: "Optional justification for cancellation",
-        },
-      },
-      required: ["requestId"],
-    },
-  },
-  {
-    name: "reset_demo_state",
-    description: "Reset cumulative daily spending to ₹0.00 and clear test transactions for testing.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
-  },
-  {
-    name: "get_payment_mandate_status",
-    description: "Inspect the pre-authorized card mandate / token on file for autonomous payments without OTP.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        agentId: {
-          type: "string",
-          description: "Optional agent identifier (e.g. 'claude_desktop_user')",
-        },
-      },
-    },
-  },
-  {
-    name: "setup_payment_mandate",
-    description: "Authorize or update the pre-authorized payment card/mandate. Generates a ₹1 setup authorization link or activates an RBI-compliant tokenized card for autonomous sub-limit charges.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        agentId: {
-          type: "string",
-          description: "Agent identifier (e.g. 'claude_desktop_user')",
-        },
-        maxSingleDebitRupees: {
-          type: "number",
-          description: "Maximum single purchase amount authorized without human prompt (default: ₹1,000)",
-        },
-        generateRazorpaySetupLink: {
-          type: "boolean",
-          description: "If true, generates a ₹1 live Razorpay hosted authorization link for the user",
-        },
-      },
-    },
-  },
-  {
-    name: "revoke_payment_mandate",
-    description: "Revoke the saved card mandate so the AI agent cannot make automatic debits without explicit approval.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        agentId: {
-          type: "string",
-          description: "Agent identifier to revoke",
-        },
-      },
     },
   },
 ];
@@ -264,6 +190,7 @@ export async function executeMCPTool(
       };
     }
 
+<<<<<<< HEAD
 // Helper: Retrieve active card mandate or generate a live ₹1 Razorpay setup link
 async function getOrCreateMandateSetupLink(agentId: string) {
   let mandate = await prisma.paymentMandate.findUnique({ where: { agentId } });
@@ -372,13 +299,12 @@ async function getOrCreateMandateSetupLink(agentId: string) {
   return { mandate, isStored: false, linkUrl: setupLink.shortUrl };
 }
 
+=======
+>>>>>>> parent of 9a2b2fc (Merge pull request #4 from AkshitJain2007/main)
     if (toolName === "get_policy_limits") {
       const dbPolicy = await prisma.policy.findFirst({
         where: { id: "policy_default" },
       });
-
-      const agentId = String(args.agentId || "chatgpt_user");
-      const { mandate, isStored, linkUrl } = await getOrCreateMandateSetupLink(agentId);
 
       return {
         content: [
@@ -393,22 +319,6 @@ async function getOrCreateMandateSetupLink(agentId: string) {
                 humanApprovalThresholdRupees: (dbPolicy?.approvalThresholdPaise || 100000) / 100,
                 velocityLimit: `${dbPolicy?.velocityCount || 3} requests per ${dbPolicy?.velocityWindowSeconds || 60}s`,
                 allowedCategories: dbPolicy ? JSON.parse(dbPolicy.allowedCategories) : [],
-                paymentMandate: isStored
-                  ? {
-                      cardStored: true,
-                      status: "ACTIVE",
-                      cardDetails: `${mandate.cardNetwork} ending in •••• ${mandate.cardLast4}`,
-                      mandateToken: mandate.tokenId,
-                      maxSingleDebitRupees: mandate.maxDebitPaise / 100,
-                      description: "Pre-authorized card on file. Autonomous sub-limit orders under ₹1,000 are debited automatically without OTP.",
-                    }
-                  : {
-                      cardStored: false,
-                      status: "NO_CARD_STORED",
-                      mandateSetupLinkUrl: linkUrl,
-                      actionRequired: "PLEASE_AUTHORIZE_CARD_FIRST",
-                      message: `No payment card is stored on file. To enable autonomous purchasing without OTP, please authorize your card using this ₹1 Razorpay link: ${linkUrl}. Once authorized, your card will be securely saved for future sub-limit orders.`,
-                    },
               },
               null,
               2
@@ -525,6 +435,7 @@ async function getOrCreateMandateSetupLink(agentId: string) {
 
       // 7. Branch on Decision
       if (policyResult.decision === "ALLOW") {
+<<<<<<< HEAD
         const { mandate, isStored, linkUrl } = await getOrCreateMandateSetupLink(agentId);
 
         if (!isStored) {
@@ -565,6 +476,41 @@ async function getOrCreateMandateSetupLink(agentId: string) {
               cardLast4: mandate.cardLast4,
               cardNetwork: mandate.cardNetwork,
               email: mandate.customerEmail,
+=======
+        const paymentResult = await mockGateway.createOrder({
+          requestId,
+          amountPaise: recalculated.totalPaise,
+          currency: "INR",
+          idempotencyKey,
+          description: reason,
+        });
+
+        await appendAuditEvent("PAYMENT_ATTEMPT_RECORDED", requestId, {
+          provider: paymentResult.provider,
+          providerOrderId: paymentResult.providerOrderId,
+          status: paymentResult.status,
+          idempotencyKey,
+          amountPaise: paymentResult.amountPaise,
+          origin: "MCP_CONNECTOR",
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  status: "APPROVED_AND_PAID",
+                  decision: "ALLOW",
+                  requestId,
+                  totalRupees: recalculated.totalPaise / 100,
+                  paymentOrderId: paymentResult.providerOrderId,
+                  message: "Order within policy limits. Mock payment captured successfully and logged to SHA-256 audit chain.",
+                },
+                null,
+                2
+              ),
+>>>>>>> parent of 9a2b2fc (Merge pull request #4 from AkshitJain2007/main)
             },
           });
 
@@ -707,19 +653,9 @@ async function getOrCreateMandateSetupLink(agentId: string) {
           },
         });
 
-        // Generate Hosted Razorpay Payment Link for human user
-        const paymentLink = await razorpayGateway.createPaymentLink({
-          requestId,
-          amountPaise: recalculated.totalPaise,
-          currency: "INR",
-          description: reason,
-        });
-
         await appendAuditEvent("HUMAN_APPROVAL_QUEUED", requestId, {
           approvalId: approval.id,
           amountPaise: recalculated.totalPaise,
-          paymentLinkId: paymentLink.id,
-          paymentLinkUrl: paymentLink.shortUrl,
           origin: "MCP_CONNECTOR",
         });
 
@@ -734,10 +670,7 @@ async function getOrCreateMandateSetupLink(agentId: string) {
                   requestId,
                   totalRupees: recalculated.totalPaise / 100,
                   reasons: policyResult.reasons,
-                  paymentLinkUrl: paymentLink.shortUrl,
-                  paymentLinkId: paymentLink.id,
-                  actionRequired: "PRESENT_PAYMENT_LINK_TO_USER",
-                  message: `Order total is ₹${(recalculated.totalPaise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}. This purchase exceeds the autonomous spending limit and requires human authorization. Please click here to pay securely via Razorpay: ${paymentLink.shortUrl}`,
+                  message: `Order of ₹${(recalculated.totalPaise / 100).toLocaleString()} exceeds auto-approval threshold. It is now held in the merchant human approval queue. Check back with tool 'check_approval_status' once approved.`,
                 },
                 null,
                 2
@@ -777,24 +710,24 @@ async function getOrCreateMandateSetupLink(agentId: string) {
     }
 
     if (toolName === "check_approval_status") {
-      const requestId = String(args.requestId || "");
-      const agentReq = await prisma.agentRequest.findUnique({
-        where: { id: requestId },
-        include: { approval: true, paymentAttempts: true },
+      const approval = await prisma.approval.findUnique({
+        where: { requestId: args.requestId },
+        include: { request: { include: { paymentAttempts: true } } },
       });
 
-      if (!agentReq) {
+      if (!approval) {
         return {
           isError: true,
           content: [
             {
               type: "text",
-              text: `No purchase request found with ID: ${requestId}`,
+              text: `No approval record found for request ID: ${args.requestId}`,
             },
           ],
         };
       }
 
+<<<<<<< HEAD
       // Find the generated payment link from payment attempt, audit events, or gateway
       let paymentLinkUrl: string | undefined;
       let paymentLinkId: string | undefined;
@@ -852,251 +785,20 @@ async function getOrCreateMandateSetupLink(agentId: string) {
 
       const isPaid = agentReq.status === "PAID";
 
+=======
+>>>>>>> parent of 9a2b2fc (Merge pull request #4 from AkshitJain2007/main)
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify(
               {
-                requestId: agentReq.id,
-                status: isPaid ? "PAID_AND_CAPTURED" : agentReq.status,
-                requestedAmountRupees: agentReq.requestedAmountPaise / 100,
-                isPaid,
-                paymentLinkUrl: isPaid ? null : (paymentLinkUrl || null),
-                actionRequired: isPaid ? "NONE" : "PLEASE_COMPLETE_PAYMENT",
-                message: isPaid
-                  ? `Payment of ₹${(agentReq.requestedAmountPaise / 100).toFixed(2)} has been successfully captured and verified on Razorpay!`
-                  : `Order is approved under SpendBoundary policy, but payment has not been completed on Razorpay yet. Please complete the payment using this link: ${paymentLinkUrl}`,
-              },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    }
-
-    if (toolName === "cancel_request") {
-      const requestId = String(args.requestId || "");
-      const cancelReason = String(args.reason || "Cancelled by user/agent request");
-
-      const agentReq = await prisma.agentRequest.findUnique({
-        where: { id: requestId },
-        include: { approval: true },
-      });
-
-      if (!agentReq) {
-        return {
-          isError: true,
-          content: [{ type: "text", text: `No purchase request found with ID "${requestId}".` }],
-        };
-      }
-
-      if (agentReq.status === "PAID") {
-        return {
-          isError: true,
-          content: [{ type: "text", text: `Cannot cancel request ${requestId} because payment has already been captured.` }],
-        };
-      }
-
-      // Update request status to REJECTED/CANCELLED
-      await prisma.agentRequest.update({
-        where: { id: requestId },
-        data: { status: "REJECTED" },
-      });
-
-      if (agentReq.approval) {
-        await prisma.approval.update({
-          where: { requestId },
-          data: {
-            decision: "REJECTED",
-            comment: cancelReason,
-            reviewerId: "agent_cancellation",
-          },
-        });
-      }
-
-      // Append cancellation to SHA-256 audit chain
-      await appendAuditEvent("PURCHASE_CANCELLED", requestId, {
-        reason: cancelReason,
-        cancelledAt: new Date().toISOString(),
-        origin: "MCP_CONNECTOR",
-      });
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                success: true,
-                status: "CANCELLED",
-                requestId,
-                message: `Request ${requestId} has been successfully cancelled and removed from the pending approvals queue.`,
-              },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    }
-
-    if (toolName === "reset_demo_state") {
-      await prisma.paymentAttempt.deleteMany();
-      await prisma.approval.deleteMany();
-      await prisma.policyDecision.deleteMany();
-      await prisma.agentRequest.deleteMany();
-
-      await appendAuditEvent("SYSTEM_DAILY_SPEND_RESET", `reset_${Date.now()}`, {
-        message: "Daily spend reset to ₹0.00 via MCP tool.",
-        origin: "MCP_CONNECTOR",
-        timestamp: new Date().toISOString(),
-      });
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                success: true,
-                dailySpentRupees: 0,
-                message: "Daily spending total and test transactions have been reset to ₹0.00. Ready for new purchases.",
-              },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    }
-
-    if (toolName === "get_payment_mandate_status") {
-      const agentId = String(args.agentId || "chatgpt_user");
-      const { mandate, isStored, linkUrl } = await getOrCreateMandateSetupLink(agentId);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              isStored
-                ? {
-                    cardStored: true,
-                    status: "ACTIVE",
-                    agentId: mandate.agentId,
-                    cardDetails: `${mandate.cardNetwork} ending in •••• ${mandate.cardLast4}`,
-                    mandateToken: mandate.tokenId,
-                    maxSingleDebitRupees: mandate.maxDebitPaise / 100,
-                    message: `Pre-authorized ${mandate.cardNetwork} card (•••• ${mandate.cardLast4}) is ACTIVE on file. Autonomous sub-limit orders up to ₹${mandate.maxDebitPaise / 100} are charged automatically without OTP.`,
-                  }
-                : {
-                    cardStored: false,
-                    status: "NO_CARD_STORED",
-                    agentId: mandate.agentId,
-                    mandateSetupLinkUrl: linkUrl,
-                    actionRequired: "PRESENT_AUTHORIZATION_LINK_TO_USER",
-                    message: `No payment card is stored on file. To enable autonomous purchasing without OTP, please authorize your card using this ₹1 Razorpay link: ${linkUrl}. Once authorized, your card will be saved securely for future sub-limit orders.`,
-                  },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    }
-
-    if (toolName === "setup_payment_mandate") {
-      const agentId = String(args.agentId || "claude_desktop_user");
-      const maxPaise = Math.round(Number(args.maxSingleDebitRupees || 1000) * 100);
-      const shouldGenerateLink = Boolean(args.generateRazorpaySetupLink);
-
-      let paymentLinkUrl: string | undefined;
-      if (shouldGenerateLink) {
-        const link = await razorpayGateway.createPaymentLink({
-          requestId: `mandate_setup_${Date.now()}`,
-          amountPaise: 100, // ₹1 setup authorization
-          currency: "INR",
-          description: "₹1 Tokenized Payment Card Mandate Authorization",
-        });
-        paymentLinkUrl = link.shortUrl;
-      }
-
-      const mandate = await prisma.paymentMandate.upsert({
-        where: { agentId },
-        update: {
-          status: "ACTIVE",
-          maxDebitPaise: maxPaise,
-          paymentLinkUrl: paymentLinkUrl || null,
-        },
-        create: {
-          agentId,
-          status: "ACTIVE",
-          maxDebitPaise: maxPaise,
-          tokenId: `token_rzp_${agentId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 10)}_card`,
-          cardLast4: "4242",
-          cardNetwork: "Visa",
-          paymentLinkUrl: paymentLinkUrl || null,
-        },
-      });
-
-      await appendAuditEvent("PAYMENT_MANDATE_REGISTERED", agentId, {
-        agentId,
-        tokenId: mandate.tokenId,
-        maxDebitPaise: mandate.maxDebitPaise,
-        status: mandate.status,
-        origin: "MCP_CONNECTOR",
-      });
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                success: true,
-                agentId: mandate.agentId,
-                status: "ACTIVE",
-                mandateToken: mandate.tokenId,
-                cardDetails: `${mandate.cardNetwork} •••• ${mandate.cardLast4}`,
-                maxSingleDebitRupees: mandate.maxDebitPaise / 100,
-                setupPaymentLinkUrl: paymentLinkUrl || null,
-                message: paymentLinkUrl
-                  ? `₹1 Mandate Setup Link generated: ${paymentLinkUrl}. Once authorized, the AI can perform sub-limit purchases up to ₹${mandate.maxDebitPaise / 100} automatically.`
-                  : `Pre-authorized card (${mandate.cardNetwork} •••• ${mandate.cardLast4}) is successfully linked and active for autonomous purchases up to ₹${mandate.maxDebitPaise / 100}.`,
-              },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    }
-
-    if (toolName === "revoke_payment_mandate") {
-      const agentId = String(args.agentId || "claude_desktop_user");
-      await prisma.paymentMandate.updateMany({
-        where: { agentId },
-        data: { status: "REVOKED" },
-      });
-
-      await appendAuditEvent("PAYMENT_MANDATE_REVOKED", agentId, {
-        agentId,
-        status: "REVOKED",
-        origin: "MCP_CONNECTOR",
-      });
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                success: true,
-                agentId,
-                status: "REVOKED",
-                message: `Card mandate for ${agentId} has been revoked. The agent can no longer charge your card automatically.`,
+                requestId: approval.requestId,
+                status: approval.decision,
+                requestedAmountRupees: approval.request.requestedAmountPaise / 100,
+                comment: approval.comment || "Pending reviewer action",
+                isPaid: approval.request.status === "PAID",
+                paymentAttempts: approval.request.paymentAttempts,
               },
               null,
               2

@@ -94,6 +94,7 @@ model AuditEvent {
   eventHash    String   // SHA256(previousHash + payloadJson + eventType + createdAt)
   createdAt    DateTime @default(now())
 }
+<<<<<<< HEAD
 
 model PaymentMandate {
   id              String   @id @default(cuid())
@@ -110,3 +111,5 @@ model PaymentMandate {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
+=======
+>>>>>>> parent of 9a2b2fc (Merge pull request #4 from AkshitJain2007/main)

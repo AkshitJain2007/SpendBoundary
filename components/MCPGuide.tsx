@@ -35,11 +35,6 @@ export function MCPGuide() {
         params = { query: testQuery };
       } else if (testTool === "get_policy_limits") {
         params = {};
-      } else if (testTool === "cancel_request") {
-        params = {
-          requestId: testQuery || "req_mcp_sample",
-          reason: "User cancelled request via MCP tool",
-        };
       } else if (testTool === "request_checkout") {
         params = {
           items: [{ productId: "prod_notebook", quantity: 1 }],
@@ -191,16 +186,15 @@ export function MCPGuide() {
               <option value="search_catalogue">search_catalogue()</option>
               <option value="get_policy_limits">get_policy_limits()</option>
               <option value="request_checkout">request_checkout()</option>
-              <option value="cancel_request">cancel_request()</option>
             </select>
           </div>
 
-          {(testTool === "search_catalogue" || testTool === "cancel_request") && (
+          {testTool === "search_catalogue" && (
             <input
               type="text"
               value={testQuery}
               onChange={(e) => setTestQuery(e.target.value)}
-              placeholder={testTool === "cancel_request" ? "Request ID to cancel (e.g. req_...)" : "Query (e.g. office, chair, lamp)..."}
+              placeholder="Query (e.g. office, chair, lamp)..."
               className="px-3 py-1.5 rounded-lg bg-navy-950 border border-navy-700 text-xs text-slate-200 focus:outline-none focus:border-brand-blue"
             />
           )}

@@ -4,7 +4,6 @@ import { CheckoutRequestSchema } from "@/lib/schemas";
 import { recalculateCartTotal } from "@/lib/cart-total";
 import { evaluatePolicy, PolicyRuleConfig } from "@/lib/policy-engine";
 import { mockGateway } from "@/lib/payments/mock-gateway";
-import { razorpayGateway } from "@/lib/payments/razorpay-gateway";
 import { appendAuditEvent } from "@/lib/audit-chain";
 
 export async function POST(request: Request) {
@@ -175,12 +174,24 @@ export async function POST(request: Request) {
 
     // 9. Branch on Decision
     if (policyResult.decision === "ALLOW") {
+<<<<<<< HEAD
       try {
         // Load the agent's stored card mandate (if any) so the gateway can
         // charge a genuine reusable token.
         const mandate = await prisma.paymentMandate.findUnique({
           where: { agentId },
         });
+=======
+      // Execute payment via gateway
+      const paymentResult = await mockGateway.createOrder({
+        requestId,
+        amountPaise: recalculated.totalPaise,
+        currency: "INR",
+        idempotencyKey,
+        description: reason,
+        simulateTimeout,
+      });
+>>>>>>> parent of 9a2b2fc (Merge pull request #4 from AkshitJain2007/main)
 
         // Execute payment via Razorpay / Gateway
         const paymentResult = await razorpayGateway.createOrder({
@@ -297,20 +308,10 @@ export async function POST(request: Request) {
         },
       });
 
-      // Create hosted Razorpay Payment Link
-      const paymentLink = await razorpayGateway.createPaymentLink({
-        requestId,
-        amountPaise: recalculated.totalPaise,
-        currency: "INR",
-        description: reason,
-      });
-
       await appendAuditEvent("HUMAN_APPROVAL_QUEUED", requestId, {
         approvalId: approval.id,
         expiresAt: expiresAt.toISOString(),
         amountPaise: recalculated.totalPaise,
-        paymentLinkId: paymentLink.id,
-        paymentLinkUrl: paymentLink.shortUrl,
       });
 
       return NextResponse.json({
@@ -320,15 +321,12 @@ export async function POST(request: Request) {
         calculatedTotalPaise: recalculated.totalPaise,
         reasons: policyResult.reasons,
         policyVersion: policyResult.policyVersion,
-        paymentLinkUrl: paymentLink.shortUrl,
-        paymentLinkId: paymentLink.id,
         approval: {
           id: approval.id,
           expiresAt: expiresAt.toISOString(),
           status: "PENDING",
-          paymentLinkUrl: paymentLink.shortUrl,
         },
-        message: `Order exceeds threshold. Submitted to human approval queue. Razorpay Payment Link generated: ${paymentLink.shortUrl}`,
+        message: "Order exceeds threshold. Submitted to human approval queue.",
       });
     }
 
